@@ -72,6 +72,7 @@ const appState: AppState = {
   notchHudOff: false,
   notchHiddenProfiles: [],
   usageAlertThresholds: null,
+  fiveDayWeekProfiles: [],
 }
 
 const guiDataDir = '/Users/ada/Library/Application Support/Claude'

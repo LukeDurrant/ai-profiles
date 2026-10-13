@@ -190,7 +190,7 @@ body {
 }
 
 .notch-row-head,
-.notch-row-foot {
+.notch-limit-caption {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -200,10 +200,21 @@ body {
   font-size: 13px;
 }
 
-.notch-row-foot {
+.notch-limit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notch-limit-caption {
   justify-content: space-between;
   font-size: 11px;
   color: var(--notch-ink-dim);
+}
+
+.notch-limit-caption .notch-figure {
+  color: var(--notch-ink);
+  font-size: 12px;
 }
 
 .notch-swatch {

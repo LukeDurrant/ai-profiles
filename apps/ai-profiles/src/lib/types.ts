@@ -164,6 +164,11 @@ export type AppState = {
    * defaults (50, 75, 90, 100). An empty list turns usage alerts off.
    */
   usageAlertThresholds: Array<number> | null
+  /**
+   * The profiles (or default entries) whose weekly pace counts only Monday
+   * to Friday. The rest count all seven days.
+   */
+  fiveDayWeekProfiles: Array<string>
 }
 
 export type AppStatePatch = {
@@ -194,6 +199,8 @@ export type AppStatePatch = {
   notchProfile?: { profileId: string; shown: boolean }
   /** Sets the usage alert thresholds. An empty list turns alerts off. */
   usageAlertThresholds?: Array<number>
+  /** Gives one profile a 5- or 7-day working week. */
+  workingWeek?: { profileId: string; days: 5 | 7 }
 }
 
 /**

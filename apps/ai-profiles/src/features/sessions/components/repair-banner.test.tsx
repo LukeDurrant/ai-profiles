@@ -35,6 +35,7 @@ function appState(dismissedRepairSessions: AppState['dismissedRepairSessions'] =
     notchHudOff: false,
     notchHiddenProfiles: [],
     usageAlertThresholds: null,
+    fiveDayWeekProfiles: [],
   }
 }
 

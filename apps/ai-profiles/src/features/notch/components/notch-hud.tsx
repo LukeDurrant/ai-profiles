@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import type { SidebarEntry } from '@/lib/types'
 import type { NotchState, UsageAlert } from '../api/notch-ipc'
-import type { WeeklyMeter } from '../lib/weekly-meter'
+import type { LimitMeter, ProfileMeters } from '../lib/profile-meters'
 
 import { Suspense, useEffect, useRef, useState } from 'react'
 
@@ -21,7 +21,7 @@ import {
   openProfileFromNotch,
   setNotchContentHeight,
 } from '../api/notch-ipc'
-import { alertCopy, formatResetsIn, highestPercent, meterLevel, weeklyMeter } from '../lib/weekly-meter'
+import { alertCopy, formatResetsIn, highestPercent, meterLevel, profileMeters } from '../lib/profile-meters'
 import { LedBar } from './led-bar'
 
 /**
@@ -87,7 +87,7 @@ export function NotchHud() {
 
 type Row = {
   entry: SidebarEntry
-  meter: WeeklyMeter | null
+  meters: ProfileMeters | null
   /** Why there is no meter, when the fetch failed and nothing is cached. */
   problem: string | null
 }
@@ -116,11 +116,13 @@ function NotchPanel({ state, alert }: { state: NotchState; alert: UsageAlert | n
     const quota = result?.data?.quota
     return {
       entry,
-      meter: quota ? weeklyMeter(appFromEntry(entry), quota, now) : null,
+      meters: quota
+        ? profileMeters(appFromEntry(entry), quota, now, appState.fiveDayWeekProfiles.includes(entryId(entry)) ? 5 : 7)
+        : null,
       problem: quota ? null : problemText(result?.error),
     }
   })
-  return <NotchFrame state={state} alert={alert} entries={rows} meters={rows.map((row) => row.meter)} />
+  return <NotchFrame state={state} alert={alert} entries={rows} meters={rows.map((row) => row.meters)} />
 }
 
 function NotchFrame({
@@ -132,7 +134,7 @@ function NotchFrame({
   state: NotchState
   alert: UsageAlert | null
   entries: Array<Row>
-  meters: Array<WeeklyMeter | null>
+  meters: Array<ProfileMeters | null>
 }) {
   const rowsRef = useRef<HTMLDivElement>(null)
   const open = state.phase === 'expanded'
@@ -212,8 +214,7 @@ function AlertBanner({ alert, entries }: { alert: UsageAlert | null; entries: Ar
 }
 
 function ProfileMeter({ row, alerted }: { row: Row; alerted: boolean }) {
-  const { entry, meter } = row
-  const percent = meter?.percent ?? null
+  const { entry, meters, problem } = row
   return (
     <button
       type="button"
@@ -226,16 +227,26 @@ function ProfileMeter({ row, alerted }: { row: Row; alerted: boolean }) {
       <span className="notch-row-head">
         <Swatch entry={entry} />
         <span className="notch-name">{entry.kind === 'managed' ? entry.profile.name : entry.entry.name}</span>
+      </span>
+      {meters?.session ? <LimitBar meter={meters.session} problem={null} /> : null}
+      <LimitBar meter={meters?.weekly ?? null} problem={problem} />
+    </button>
+  )
+}
+
+/** One limit: its caption and reset time over its LED bar. */
+function LimitBar({ meter, problem }: { meter: LimitMeter | null; problem: string | null }) {
+  const percent = meter?.percent ?? null
+  return (
+    <span className="notch-limit">
+      <span className="notch-limit-caption">
+        <span>{captionText(meter, problem)}</span>
         <span className="notch-figure" data-level={meterLevel(percent)}>
           {formatPercent(percent)}
         </span>
       </span>
       <LedBar percent={percent} elapsed={meter?.elapsed ?? null} level={meterLevel(percent)} />
-      <span className="notch-row-foot">
-        <span>{footText(row)}</span>
-        <span>{meter?.session ? `${meter.session.label} ${formatPercent(meter.session.percent)}` : ''}</span>
-      </span>
-    </button>
+    </span>
   )
 }
 
@@ -251,13 +262,14 @@ function formatPercent(percent: number | null): string {
   return percent === null ? '--' : `${Math.round(percent)}%`
 }
 
-/** Pure: the line under a meter — why it is empty, or when it resets. */
-function footText({ meter, problem }: Row): string {
+/** Pure: a bar's caption — its window and when it resets, or why it is empty. */
+function captionText(meter: LimitMeter | null, problem: string | null): string {
   if (problem) {
     return problem
   }
   const resetsIn = meter?.resetsAt ? formatResetsIn(meter.resetsAt, new Date()) : null
-  return resetsIn ? `Resets in ${resetsIn}` : 'Weekly limit'
+  const label = meter?.label ?? 'Week'
+  return resetsIn ? `${label} · resets in ${resetsIn}` : label
 }
 
 /** Pure: a short reason for a profile with no reading, or null while loading. */

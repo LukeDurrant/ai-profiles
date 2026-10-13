@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadAppState, updateAppState } from '@/lib/commands'
 import { renderWithQuery } from '@/test/render-with-query'
 
-import { NotchProfileToggle } from './notch-profile-toggle'
+import { NotchProfileControls } from './notch-profile-controls'
 
 vi.mock('@/lib/commands', () => ({ loadAppState: vi.fn(), updateAppState: vi.fn() }))
 
@@ -23,6 +23,7 @@ function appState(overrides: Partial<AppState> = {}): AppState {
     notchHudOff: false,
     notchHiddenProfiles: [],
     usageAlertThresholds: null,
+    fiveDayWeekProfiles: [],
     ...overrides,
   }
 }
@@ -33,10 +34,10 @@ beforeEach(() => {
   )
 })
 
-describe('NotchProfileToggle', () => {
+describe('NotchProfileControls', () => {
   it('is a labelled switch that hides the profile from the notch', async () => {
     vi.mocked(loadAppState).mockResolvedValue(appState())
-    renderWithQuery(<NotchProfileToggle profileId="p1" />)
+    renderWithQuery(<NotchProfileControls profileId="p1" />)
 
     const toggle = await screen.findByRole('switch', { name: 'In notch' })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
@@ -50,16 +51,24 @@ describe('NotchProfileToggle', () => {
 
   it('reads as off for a hidden profile', async () => {
     vi.mocked(loadAppState).mockResolvedValue(appState({ notchHiddenProfiles: ['p1'] }))
-    renderWithQuery(<NotchProfileToggle profileId="p1" />)
+    renderWithQuery(<NotchProfileControls profileId="p1" />)
 
     expect(await screen.findByRole('switch', { name: 'In notch' })).toHaveAttribute('aria-checked', 'false')
   })
 
   it('is absent while the notch HUD is off', async () => {
     vi.mocked(loadAppState).mockResolvedValue(appState({ notchHudOff: true }))
-    renderWithQuery(<NotchProfileToggle profileId="p1" />)
+    renderWithQuery(<NotchProfileControls profileId="p1" />)
 
     await waitFor(() => expect(loadAppState).toHaveBeenCalled())
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+  })
+
+  it('gives the profile a five-day week', async () => {
+    vi.mocked(loadAppState).mockResolvedValue(appState())
+    renderWithQuery(<NotchProfileControls profileId="p1" />)
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Five-day week, Monday to Friday' }))
+    await waitFor(() => expect(updateAppState).toHaveBeenCalledWith({ workingWeek: { profileId: 'p1', days: 5 } }))
   })
 })

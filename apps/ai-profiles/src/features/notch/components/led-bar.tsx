@@ -1,4 +1,4 @@
-import type { MeterLevel } from '../lib/weekly-meter'
+import type { MeterLevel } from '../lib/profile-meters'
 
 /** Segments per bar, as antiburn's HUD draws them. */
 const segmentCount = 20

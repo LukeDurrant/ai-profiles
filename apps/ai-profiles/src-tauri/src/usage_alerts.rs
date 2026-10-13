@@ -25,7 +25,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Duration, TimeZone, Utc};
 use serde::Serialize;
 
 use crate::app_kind::AppKind;
@@ -73,8 +73,67 @@ pub struct UsageAlert {
     pub ahead: bool,
 }
 
+/// A profile's working week: whether its weekly pace counts every day, or
+/// only Monday to Friday.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkingWeek {
+    SevenDays,
+    FiveDays,
+}
+
+/// Seconds of `from..to` that fall on Monday to Friday in `tz`.
+fn weekday_seconds<Tz: TimeZone>(from: DateTime<Utc>, to: DateTime<Utc>, tz: &Tz) -> f64 {
+    let mut seconds = 0.0;
+    let mut cursor = from;
+    while cursor < to {
+        let local = cursor.with_timezone(tz);
+        let next_midnight = local
+            .date_naive()
+            .succ_opt()
+            .and_then(|day| day.and_hms_opt(0, 0, 0))
+            .and_then(|midnight| tz.from_local_datetime(&midnight).earliest())
+            .map(|midnight| midnight.with_timezone(&Utc))
+            .filter(|midnight| *midnight > cursor)
+            // A midnight a clock change skips: move on a day.
+            .unwrap_or(cursor + Duration::days(1));
+        let end = next_midnight.min(to);
+        if local.weekday().num_days_from_monday() < 5 {
+            seconds += (end - cursor).num_seconds() as f64;
+        }
+        cursor = end;
+    }
+    seconds
+}
+
+/// The share of a window gone by `now`, 0-100. A five-day week counts only
+/// weekday time, so the pace holds still over the weekend.
+fn elapsed_percent<Tz: TimeZone>(
+    resets_at: DateTime<Utc>,
+    minutes: i64,
+    week: WorkingWeek,
+    now: DateTime<Utc>,
+    tz: &Tz,
+) -> f64 {
+    let start = resets_at - Duration::minutes(minutes);
+    let share = match week {
+        WorkingWeek::FiveDays if minutes == WEEK_MINUTES => {
+            let total = weekday_seconds(start, resets_at, tz);
+            (total > 0.0).then(|| weekday_seconds(start, now.clamp(start, resets_at), tz) / total)
+        }
+        _ => None,
+    }
+    .unwrap_or_else(|| (now - start).num_seconds() as f64 / (minutes * 60) as f64);
+    (share * 100.0).clamp(0.0, 100.0)
+}
+
 /// The readings of one usage snapshot: the weekly limit and the session.
-fn readings(app: AppKind, quota: &QuotaUsage, now: DateTime<Utc>) -> Vec<Reading> {
+fn readings<Tz: TimeZone>(
+    app: AppKind,
+    quota: &QuotaUsage,
+    week: WorkingWeek,
+    now: DateTime<Utc>,
+    tz: &Tz,
+) -> Vec<Reading> {
     let windows: Vec<(AlertWindow, i64, &Window)> = match app {
         AppKind::Claude => [
             quota
@@ -107,10 +166,10 @@ fn readings(app: AppKind, quota: &QuotaUsage, now: DateTime<Utc>) -> Vec<Reading
         .into_iter()
         .filter_map(|(window, minutes, raw)| {
             let used = f64::from(raw.utilization?);
-            let resets_at = DateTime::parse_from_rfc3339(raw.resets_at.as_deref()?).ok()?;
-            let remaining = (resets_at.with_timezone(&Utc) - now).num_seconds() as f64;
-            let length = (minutes * 60) as f64;
-            let elapsed = ((1.0 - remaining / length) * 100.0).clamp(0.0, 100.0);
+            let resets_at = DateTime::parse_from_rfc3339(raw.resets_at.as_deref()?)
+                .ok()?
+                .with_timezone(&Utc);
+            let elapsed = elapsed_percent(resets_at, minutes, week, now, tz);
             used.is_finite().then_some(Reading {
                 window,
                 minutes,
@@ -215,7 +274,7 @@ mod macos {
     use chrono::Utc;
     use tauri::AppHandle;
 
-    use super::{best, readings, Ledger, ProfileUsage};
+    use super::{best, readings, Ledger, ProfileUsage, WorkingWeek};
     use crate::app_kind::{default_id, spec, AppKind};
     use crate::commands::{fetch_profile_usage, resolve_app, Attendance};
     use crate::{app_state, notch, paths, profiles};
@@ -245,7 +304,12 @@ mod macos {
             return;
         };
         let state = app_state::load().unwrap_or_default();
-        let readings = readings(kind, quota, Utc::now());
+        let week = if state.five_day_week_profiles.contains(profile_id) {
+            WorkingWeek::FiveDays
+        } else {
+            WorkingWeek::SevenDays
+        };
+        let readings = readings(kind, quota, week, Utc::now(), &chrono::Local);
         let mut ledger = ledger();
         let crossings = ledger.crossings(profile_id, &readings, &state.alert_thresholds());
         let Some((key, alert)) = best(crossings) else {
@@ -361,7 +425,7 @@ mod tests {
     }
 
     fn pass(ledger: &mut Ledger, quota: &QuotaUsage) -> Option<UsageAlert> {
-        let readings = readings(AppKind::Claude, quota, now());
+        let readings = readings(AppKind::Claude, quota, WorkingWeek::SevenDays, now(), &Utc);
         let (key, alert) = best(ledger.crossings("p1", &readings, &DEFAULT_THRESHOLDS))?;
         ledger.shown(key, alert.used);
         Some(alert)
@@ -369,7 +433,13 @@ mod tests {
 
     #[test]
     fn readings_carry_the_share_of_the_window_gone() {
-        let readings = readings(AppKind::Claude, &claude(40.0, 10.0), now());
+        let readings = readings(
+            AppKind::Claude,
+            &claude(40.0, 10.0),
+            WorkingWeek::SevenDays,
+            now(),
+            &Utc,
+        );
         assert_eq!(readings.len(), 2);
         assert_eq!(readings[0].window, AlertWindow::Weekly);
         assert!((readings[0].elapsed - 50.0).abs() < 1e-9);
@@ -386,7 +456,7 @@ mod tests {
             spend: None,
             rate_limit_reset_credits: None,
         };
-        let readings = readings(AppKind::Codex, &quota, now());
+        let readings = readings(AppKind::Codex, &quota, WorkingWeek::SevenDays, now(), &Utc);
         assert_eq!(readings[0].window, AlertWindow::Weekly);
         assert_eq!(readings[1].window, AlertWindow::Session);
         assert_eq!(readings[1].minutes, 300);
@@ -452,5 +522,48 @@ mod tests {
             normalise_thresholds(&[90, 0, 50, 50, 101, 75]),
             vec![50, 75, 90]
         );
+    }
+
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn a_five_day_week_counts_only_weekday_time() {
+        // The window runs Tuesday 13 October to Tuesday 20 October, midnight
+        // to midnight: Tue-Fri, then Mon, is five weekdays.
+        let reset = at("2026-10-20T00:00:00Z");
+        let five =
+            |now: &str| elapsed_percent(reset, WEEK_MINUTES, WorkingWeek::FiveDays, at(now), &Utc);
+        assert!((five("2026-10-13T00:00:00Z") - 0.0).abs() < 1e-9);
+        // Friday's end: four of five weekdays gone.
+        assert!((five("2026-10-17T00:00:00Z") - 80.0).abs() < 1e-9);
+        // The weekend holds the pace still.
+        assert!((five("2026-10-18T12:00:00Z") - 80.0).abs() < 1e-9);
+        assert!((five("2026-10-19T12:00:00Z") - 90.0).abs() < 1e-9);
+        // A seven-day week counts the clock.
+        let seven = elapsed_percent(
+            reset,
+            WEEK_MINUTES,
+            WorkingWeek::SevenDays,
+            at("2026-10-17T00:00:00Z"),
+            &Utc,
+        );
+        assert!((seven - 400.0 / 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_session_window_always_counts_the_clock() {
+        let reset = at("2026-10-18T05:00:00Z");
+        let elapsed = elapsed_percent(
+            reset,
+            300,
+            WorkingWeek::FiveDays,
+            at("2026-10-18T02:30:00Z"),
+            &Utc,
+        );
+        assert!((elapsed - 50.0).abs() < 1e-9);
     }
 }

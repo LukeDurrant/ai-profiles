@@ -72,22 +72,32 @@ export function computeOptimisticAppState(previous: AppState, patch: AppStatePat
     defaultProfileNames: withDefaultProfileName(previous.defaultProfileNames, patch.defaultProfileName),
     dismissedRepairSessions: withDismissedRepair(previous.dismissedRepairSessions, patch.dismissedRepair),
     notchHudOff: patch.notchHudOff ?? previous.notchHudOff,
-    notchHiddenProfiles: withNotchProfile(previous.notchHiddenProfiles, patch.notchProfile),
+    notchHiddenProfiles: withProfileFlag(
+      previous.notchHiddenProfiles,
+      patch.notchProfile && { profileId: patch.notchProfile.profileId, on: !patch.notchProfile.shown },
+    ),
     usageAlertThresholds: patch.usageAlertThresholds ?? previous.usageAlertThresholds,
+    fiveDayWeekProfiles: withProfileFlag(
+      previous.fiveDayWeekProfiles,
+      patch.workingWeek && { profileId: patch.workingWeek.profileId, on: patch.workingWeek.days === 5 },
+    ),
   }
 }
 
-/** Mirrors the Rust side: a shown profile leaves the hidden list. */
-function withNotchProfile(
-  hidden: AppState['notchHiddenProfiles'] | undefined,
-  change: AppStatePatch['notchProfile'],
-): AppState['notchHiddenProfiles'] {
-  const current = hidden ?? []
+/**
+ * Mirrors the Rust side for a per-profile list: a profile joins it when its
+ * flag goes on and leaves when it goes off.
+ */
+function withProfileFlag(
+  ids: Array<string> | undefined,
+  change: { profileId: string; on: boolean } | undefined,
+): Array<string> {
+  const current = ids ?? []
   if (!change) {
     return current
   }
   const others = current.filter((id) => id !== change.profileId)
-  return change.shown ? others : [...others, change.profileId]
+  return change.on ? [...others, change.profileId] : others
 }
 
 /** Mirrors the Rust side: trims, and an empty name drops the custom name. */

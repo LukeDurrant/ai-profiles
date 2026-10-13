@@ -2,7 +2,7 @@ import type { QuotaUsage } from '@/lib/types'
 
 import { describe, expect, it } from 'vitest'
 
-import { alertCopy, elapsedFraction, formatResetsIn, highestPercent, meterLevel, weeklyMeter } from './weekly-meter'
+import { alertCopy, elapsedFraction, formatResetsIn, highestPercent, meterLevel, profileMeters } from './profile-meters'
 
 const now = new Date('2026-10-13T00:00:00Z')
 
@@ -10,23 +10,23 @@ function quota(overrides: Partial<QuotaUsage>): QuotaUsage {
   return { primary: null, secondary: null, scopedWeekly: [], ...overrides }
 }
 
-describe('weeklyMeter', () => {
-  it('reads Claude’s weekly limit from the secondary window and its session from the primary', () => {
-    const meter = weeklyMeter(
+describe('profileMeters', () => {
+  it('reads Claude’s session from the primary window and its week from the secondary', () => {
+    const meters = profileMeters(
       'claude',
       quota({
-        primary: { utilization: 12, resetsAt: '2026-10-13T03:00:00Z' },
+        primary: { utilization: 12, resetsAt: '2026-10-13T02:30:00Z' },
         secondary: { utilization: 32, resetsAt: '2026-10-17T23:00:00Z' },
       }),
       now,
     )
-    expect(meter.percent).toBe(32)
-    expect(meter.resetsAt).toEqual(new Date('2026-10-17T23:00:00Z'))
-    expect(meter.session).toEqual({ label: '5h', percent: 12 })
+    expect(meters.session).toMatchObject({ label: '5h', percent: 12 })
+    expect(meters.session?.elapsed).toBeCloseTo(0.5)
+    expect(meters.weekly).toMatchObject({ label: 'Week', percent: 32, resetsAt: new Date('2026-10-17T23:00:00Z') })
   })
 
-  it('finds Codex’s weekly limit by its duration, whichever slot it is in', () => {
-    const meter = weeklyMeter(
+  it('tells Codex’s windows apart by their length, whichever slot they are in', () => {
+    const meters = profileMeters(
       'codex',
       quota({
         primary: { utilization: 60, resetsAt: '2026-10-19T00:00:00Z', windowDurationMins: 10080 },
@@ -34,26 +34,40 @@ describe('weeklyMeter', () => {
       }),
       now,
     )
-    expect(meter.percent).toBe(60)
-    expect(meter.session).toEqual({ label: '5h', percent: 5 })
+    expect(meters.weekly?.percent).toBe(60)
+    expect(meters.session).toMatchObject({ label: '5h', percent: 5 })
   })
 
-  it('has no weekly reading when no window lasts a week', () => {
-    const meter = weeklyMeter(
+  it('has no weekly bar when no window lasts a week', () => {
+    const meters = profileMeters(
       'codex',
       quota({ primary: { utilization: 5, resetsAt: null, windowDurationMins: 300 } }),
       now,
     )
-    expect(meter.percent).toBeNull()
-    expect(meter.elapsed).toBeNull()
+    expect(meters.weekly).toBeNull()
+    expect(meters.session?.elapsed).toBeNull()
   })
 })
 
 describe('elapsedFraction', () => {
-  it('is the share of the week gone before the reset', () => {
+  it('is the share of a seven-day week gone before the reset', () => {
     expect(elapsedFraction(new Date('2026-10-16T12:00:00Z'), now)).toBeCloseTo(0.5)
     expect(elapsedFraction(new Date('2026-10-20T00:00:00Z'), now)).toBe(0)
     expect(elapsedFraction(new Date('2026-10-12T00:00:00Z'), now)).toBe(1)
+  })
+
+  it('counts only weekdays in a five-day week, so the weekend holds the pace still', () => {
+    // A local-time week from Tuesday 13 to Tuesday 20 October: five weekdays.
+    const reset = new Date(2026, 9, 20)
+    expect(elapsedFraction(reset, new Date(2026, 9, 17), undefined, 5)).toBeCloseTo(0.8)
+    expect(elapsedFraction(reset, new Date(2026, 9, 18, 12), undefined, 5)).toBeCloseTo(0.8)
+    expect(elapsedFraction(reset, new Date(2026, 9, 19, 12), undefined, 5)).toBeCloseTo(0.9)
+    expect(elapsedFraction(reset, new Date(2026, 9, 17), undefined, 7)).toBeCloseTo(4 / 7)
+  })
+
+  it('always counts the clock for a session', () => {
+    const reset = new Date(2026, 9, 18, 5)
+    expect(elapsedFraction(reset, new Date(2026, 9, 18, 2, 30), 300, 5)).toBeCloseTo(0.5)
   })
 })
 
@@ -80,7 +94,10 @@ describe('meterLevel', () => {
 
 describe('highestPercent', () => {
   it('is the most-used weekly limit, ignoring profiles with no reading', () => {
-    const meter = (percent: number | null) => ({ percent, elapsed: null, resetsAt: null, session: null })
+    const meter = (percent: number | null) => ({
+      session: null,
+      weekly: { label: 'Week', percent, elapsed: null, resetsAt: null },
+    })
     expect(highestPercent([meter(32), null, meter(null), meter(71)])).toBe(71)
     expect(highestPercent([null])).toBeNull()
   })

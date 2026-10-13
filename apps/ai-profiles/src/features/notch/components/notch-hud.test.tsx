@@ -68,6 +68,7 @@ function appState(notchHiddenProfiles: Array<string> = []): AppState {
     notchHudOff: false,
     notchHiddenProfiles,
     usageAlertThresholds: null,
+    fiveDayWeekProfiles: [],
   }
 }
 
@@ -99,16 +100,18 @@ beforeEach(() => {
 })
 
 describe('NotchHud', () => {
-  it('shows each profile’s name, weekly limit and reset time', async () => {
+  it('shows each profile’s 5-hour bar over its weekly bar, with their resets', async () => {
     given({ entries: [managed('work', 'Work'), managed('home', 'Home')] })
     renderWithQuery(<NotchHud />)
 
     expect(await screen.findByText('32%')).toBeInTheDocument()
-    expect(screen.getByText('Work')).toBeInTheDocument()
     expect(screen.getByText('Home')).toBeInTheDocument()
-    expect(screen.getAllByText('Resets in 4d 23h')).toHaveLength(2)
-    expect(screen.getAllByText('5h 12%')).toHaveLength(2)
-    // The folded wing carries the tightest limit.
+    const work = screen.getByText('Work').closest('button')
+    const captions = Array.from(work?.querySelectorAll('.notch-limit-caption') ?? []).map(
+      (caption) => caption.textContent,
+    )
+    expect(captions).toEqual(['5h · resets in 3h 0m12%', 'Week · resets in 4d 23h32%'])
+    // The folded wing carries the tightest weekly limit.
     expect(screen.getAllByText('85%')).toHaveLength(2)
   })
 

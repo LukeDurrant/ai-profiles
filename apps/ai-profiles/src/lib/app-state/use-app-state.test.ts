@@ -21,6 +21,7 @@ function makeAppState(overrides: Partial<AppState> = {}): AppState {
     notchHudOff: false,
     notchHiddenProfiles: [],
     usageAlertThresholds: null,
+    fiveDayWeekProfiles: [],
     ...overrides,
   }
 }
@@ -109,6 +110,13 @@ describe('useAppState', () => {
 })
 
 describe('computeOptimisticAppState', () => {
+  it('gives a profile a five-day week and back', () => {
+    const five = computeOptimisticAppState(makeAppState(), { workingWeek: { profileId: 'p1', days: 5 } })
+    expect(five.fiveDayWeekProfiles).toEqual(['p1'])
+    const seven = computeOptimisticAppState(five, { workingWeek: { profileId: 'p1', days: 7 } })
+    expect(seven.fiveDayWeekProfiles).toEqual([])
+  })
+
   it('hides a profile from the notch and shows it again', () => {
     const hidden = computeOptimisticAppState(makeAppState(), { notchProfile: { profileId: 'p1', shown: false } })
     expect(hidden.notchHiddenProfiles).toEqual(['p1'])
