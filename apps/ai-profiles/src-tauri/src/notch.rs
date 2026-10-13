@@ -432,7 +432,7 @@ mod macos {
         let _ = window.set_size(LogicalSize::new(frame.width, frame.height));
         let _ = window.set_position(PhysicalPosition::new(frame.x, frame.y));
         let _ = window.emit_to(LABEL, STATE_EVENT, notch.state(phase));
-        let _ = window.show();
+        show_without_activating(window);
     }
 
     fn set_expanded(window: &WebviewWindow, expanded: bool) {
@@ -515,6 +515,25 @@ mod macos {
                     }
                 }
             }
+        });
+    }
+
+    /// Bring the panel on screen without making ai-profiles the active app.
+    ///
+    /// `WebviewWindow::show` makes the window key, which activates the app
+    /// and raises the main window with it. A HUD only wants to be seen.
+    fn show_without_activating(window: &WebviewWindow) {
+        let native = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            use objc2_app_kit::NSWindow;
+
+            let Ok(pointer) = native.ns_window() else {
+                return;
+            };
+            // SAFETY: Tauri hands out the live NSWindow of this webview
+            // window, and this runs on the main thread.
+            let ns_window: &NSWindow = unsafe { &*pointer.cast::<NSWindow>() };
+            ns_window.orderFrontRegardless();
         });
     }
 
