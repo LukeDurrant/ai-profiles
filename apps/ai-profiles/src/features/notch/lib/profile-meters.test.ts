@@ -2,7 +2,7 @@ import type { QuotaUsage } from '@/lib/types'
 
 import { describe, expect, it } from 'vitest'
 
-import { alertCopy, elapsedFraction, formatResetsIn, highestPercent, meterLevel, profileMeters } from './profile-meters'
+import { alertCopy, elapsedFraction, formatResetsIn, meterLevel, profileMeters } from './profile-meters'
 
 const now = new Date('2026-10-13T00:00:00Z')
 
@@ -89,17 +89,6 @@ describe('meterLevel', () => {
     expect(meterLevel(79)).toBe('ok')
     expect(meterLevel(80)).toBe('warn')
     expect(meterLevel(100)).toBe('full')
-  })
-})
-
-describe('highestPercent', () => {
-  it('is the most-used weekly limit, ignoring profiles with no reading', () => {
-    const meter = (percent: number | null) => ({
-      session: null,
-      weekly: { label: 'Week', percent, elapsed: null, resetsAt: null },
-    })
-    expect(highestPercent([meter(32), null, meter(null), meter(71)])).toBe(71)
-    expect(highestPercent([null])).toBeNull()
   })
 })
 

@@ -109,33 +109,41 @@ body {
   justify-content: flex-start;
 }
 
-/* The mark beside the camera is a short bar, not a dot: a round light by the
-   lens reads as the camera light. */
-.notch-mark {
-  width: 12px;
-  height: 3px;
-  margin-right: 9px;
-  border-radius: 999px;
-  background: var(--notch-ink);
-  opacity: 0.55;
+.notch-wing-left {
+  padding-right: 10px;
 }
 
-.notch-mark[data-level="warn"] {
-  background: var(--notch-warn);
-  opacity: 1;
+.notch-wing-right {
+  padding-left: 10px;
 }
 
-.notch-mark[data-level="full"] {
-  background: var(--notch-full);
-  opacity: 1;
+/* The folded summary: one chip per profile either side of the camera. */
+.notch-chips {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
 }
 
-.notch-wing-figure {
-  width: var(--notch-wing);
-  text-align: center;
+.notch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.notch-chip-figure {
   font-size: 10px;
   letter-spacing: 0;
   color: var(--notch-ink-dim);
+}
+
+.notch-chip-figure[data-level="warn"] {
+  color: var(--notch-warn);
+}
+
+.notch-chip-figure[data-level="full"] {
+  color: var(--notch-full);
 }
 
 .notch-body {

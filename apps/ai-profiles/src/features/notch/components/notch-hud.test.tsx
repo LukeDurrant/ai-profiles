@@ -19,6 +19,7 @@ vi.mock('../api/notch-ipc', async (importOriginal) => ({
   onNotchState: vi.fn(),
   openProfileFromNotch: vi.fn(),
   setNotchContentHeight: vi.fn(),
+  setNotchWingWidth: vi.fn(),
 }))
 vi.mock('@/features/profiles/api/use-sidebar-entries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/profiles/api/use-sidebar-entries')>()),
@@ -104,15 +105,31 @@ describe('NotchHud', () => {
     given({ entries: [managed('work', 'Work'), managed('home', 'Home')] })
     renderWithQuery(<NotchHud />)
 
-    expect(await screen.findByText('32%')).toBeInTheDocument()
-    expect(screen.getByText('Home')).toBeInTheDocument()
+    expect(await screen.findByText('Home')).toBeInTheDocument()
     const work = screen.getByText('Work').closest('button')
-    const captions = Array.from(work?.querySelectorAll('.notch-limit-caption') ?? []).map(
-      (caption) => caption.textContent,
+    const captions = () =>
+      Array.from(work?.querySelectorAll('.notch-limit-caption') ?? []).map((caption) => caption.textContent)
+    await vi.waitFor(() => expect(captions()).toEqual(['5h · resets in 3h 0m12%', 'Week · resets in 4d 23h32%']))
+  })
+
+  it('sums every profile up in the folded notch, split either side of the camera', async () => {
+    given({ entries: [managed('work', 'Work'), managed('home', 'Home'), managed('play', 'Play')] })
+    renderWithQuery(<NotchHud />)
+    await screen.findByText('Work')
+
+    const chips = (side: string) =>
+      Array.from(document.querySelectorAll(`.notch-wing-${side} .notch-chip`)).map((chip) => [
+        chip.getAttribute('title'),
+        chip.textContent,
+      ])
+    await vi.waitFor(() =>
+      expect(chips('left')).toEqual([
+        ['Work', '32%'],
+        ['Home', '85%'],
+      ]),
     )
-    expect(captions).toEqual(['5h · resets in 3h 0m12%', 'Week · resets in 4d 23h32%'])
-    // The folded wing carries the tightest weekly limit.
-    expect(screen.getAllByText('85%')).toHaveLength(2)
+    expect(chips('right')).toEqual([['Play', '85%']])
+    expect(document.querySelector('[title="Home"] .notch-chip-figure')).toHaveAttribute('data-level', 'warn')
   })
 
   it('leaves out profiles hidden from the notch and profiles without a CLI', async () => {

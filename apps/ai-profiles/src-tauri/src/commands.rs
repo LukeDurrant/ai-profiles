@@ -510,6 +510,12 @@ pub fn notch_set_content_height(app: tauri::AppHandle, height: f64) {
     notch::set_content_height(&app, height);
 }
 
+/// The HUD webview measured its folded profile summary: fit the wings to it.
+#[tauri::command]
+pub fn notch_set_wing_width(app: tauri::AppHandle, width: f64) {
+    notch::set_wing_width(&app, width);
+}
+
 /// A profile row in the notch HUD was clicked: show it in the main window.
 #[tauri::command]
 pub fn notch_open_profile(app: tauri::AppHandle, id: String) {

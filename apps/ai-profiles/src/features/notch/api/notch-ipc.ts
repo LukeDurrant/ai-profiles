@@ -64,6 +64,11 @@ export function onNotchAlert(handler: (alert: UsageAlert) => void): Promise<() =
   return listen<UsageAlert>('notch:alert', (event) => handler(event.payload))
 }
 
+/** Report the width the folded profile summary needs either side of the notch. */
+export function setNotchWingWidth(width: number): Promise<void> {
+  return invoke('notch_set_wing_width', { width })
+}
+
 /** Show profile `id` in the main window. */
 export function openProfileFromNotch(id: string): Promise<void> {
   return invoke('notch_open_profile', { id })

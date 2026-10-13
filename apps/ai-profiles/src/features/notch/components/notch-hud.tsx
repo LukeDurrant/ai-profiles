@@ -20,8 +20,9 @@ import {
   onNotchState,
   openProfileFromNotch,
   setNotchContentHeight,
+  setNotchWingWidth,
 } from '../api/notch-ipc'
-import { alertCopy, formatResetsIn, highestPercent, meterLevel, profileMeters } from '../lib/profile-meters'
+import { alertCopy, formatResetsIn, meterLevel, profileMeters } from '../lib/profile-meters'
 import { LedBar } from './led-bar'
 
 /**
@@ -79,7 +80,7 @@ export function NotchHud() {
     return null
   }
   return (
-    <Suspense fallback={<NotchFrame state={state} alert={null} entries={[]} meters={[]} />}>
+    <Suspense fallback={<NotchFrame state={state} alert={null} entries={[]} />}>
       <NotchPanel state={state} alert={alert} />
     </Suspense>
   )
@@ -122,23 +123,12 @@ function NotchPanel({ state, alert }: { state: NotchState; alert: UsageAlert | n
       problem: quota ? null : problemText(result?.error),
     }
   })
-  return <NotchFrame state={state} alert={alert} entries={rows} meters={rows.map((row) => row.meters)} />
+  return <NotchFrame state={state} alert={alert} entries={rows} />
 }
 
-function NotchFrame({
-  state,
-  alert,
-  entries,
-  meters,
-}: {
-  state: NotchState
-  alert: UsageAlert | null
-  entries: Array<Row>
-  meters: Array<ProfileMeters | null>
-}) {
+function NotchFrame({ state, alert, entries }: { state: NotchState; alert: UsageAlert | null; entries: Array<Row> }) {
   const rowsRef = useRef<HTMLDivElement>(null)
   const open = state.phase === 'expanded'
-  const highest = highestPercent(meters)
 
   // The rows render folded too, clipped by the window, so their height is
   // known before the panel opens and the open is a single resize. They sit
@@ -175,15 +165,7 @@ function NotchFrame({
 
   return (
     <div className={open ? 'notch-panel notch-panel-open' : 'notch-panel'} style={style}>
-      <header className="notch-header">
-        <div className="notch-wing notch-wing-left">
-          <span className="notch-mark" data-level={meterLevel(highest)} />
-        </div>
-        <div />
-        <div className="notch-wing notch-wing-right">
-          {highest === null ? null : <span className="notch-wing-figure">{Math.round(highest)}%</span>}
-        </div>
-      </header>
+      <ProfileSummary entries={entries} />
       <div className="notch-body" style={{ maxHeight: state.bodyMaxHeight }}>
         <div ref={rowsRef} className="notch-rows">
           <AlertBanner alert={alert} entries={entries} />
@@ -194,6 +176,68 @@ function NotchFrame({
         </div>
       </div>
     </div>
+  )
+}
+
+/** The space between a wing's chips and the notch, and the screen side. */
+const wingPadding = 10
+
+/**
+ * The folded notch's summary: a chip per profile — its colour and weekly
+ * percentage — split either side of the camera. The shell sizes the wings
+ * to fit the wider side.
+ */
+function ProfileSummary({ entries }: { entries: Array<Row> }) {
+  const leftRef = useRef<HTMLSpanElement>(null)
+  const rightRef = useRef<HTMLSpanElement>(null)
+  const half = Math.ceil(entries.length / 2)
+
+  useEffect(() => {
+    const left = leftRef.current
+    const right = rightRef.current
+    if (!(left && right)) {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      void setNotchWingWidth(Math.max(left.offsetWidth, right.offsetWidth) + wingPadding * 2)
+    })
+    observer.observe(left)
+    observer.observe(right)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <header className="notch-header">
+      <div className="notch-wing notch-wing-left">
+        <span ref={leftRef} className="notch-chips">
+          {entries.slice(0, half).map((row) => (
+            <SummaryChip key={entryId(row.entry)} row={row} />
+          ))}
+        </span>
+      </div>
+      <div />
+      <div className="notch-wing notch-wing-right">
+        <span ref={rightRef} className="notch-chips">
+          {entries.slice(half).map((row) => (
+            <SummaryChip key={entryId(row.entry)} row={row} />
+          ))}
+        </span>
+      </div>
+    </header>
+  )
+}
+
+/** One profile in the folded summary: its swatch and weekly percentage. */
+function SummaryChip({ row }: { row: Row }) {
+  const percent = row.meters?.weekly?.percent ?? null
+  const name = row.entry.kind === 'managed' ? row.entry.profile.name : row.entry.entry.name
+  return (
+    <span className="notch-chip" title={name}>
+      <Swatch entry={row.entry} />
+      <span className="notch-chip-figure" data-level={meterLevel(percent)}>
+        {formatPercent(percent)}
+      </span>
+    </span>
   )
 }
 

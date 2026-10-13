@@ -163,6 +163,7 @@ pub fn run() {
             commands::update_app_state,
             commands::notch_state,
             commands::notch_set_content_height,
+            commands::notch_set_wing_width,
             commands::notch_open_profile,
             commands::get_app_metadata,
             commands::get_profile_usage,

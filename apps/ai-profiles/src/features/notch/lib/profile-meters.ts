@@ -148,21 +148,6 @@ export function meterLevel(percent: number | null): MeterLevel {
   return percent >= 100 ? 'full' : 'warn'
 }
 
-/**
- * Pure: the figure for the collapsed notch's wing — the most-used weekly
- * limit across profiles, so the tightest one shows without opening the HUD.
- */
-export function highestPercent(meters: ReadonlyArray<ProfileMeters | null>): number | null {
-  let highest: number | null = null
-  for (const meter of meters) {
-    const percent = meter?.weekly?.percent
-    if (percent != null && (highest === null || percent > highest)) {
-      highest = percent
-    }
-  }
-  return highest
-}
-
 /** What the panel says about a usage alert. */
 export type AlertCopy = { title: string; detail: string }
 

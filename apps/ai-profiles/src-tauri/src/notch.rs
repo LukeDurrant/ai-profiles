@@ -22,9 +22,13 @@ use serde::Serialize;
 /// The label of the HUD window. The frontend serves it `notch.html`.
 pub const LABEL: &str = "notch";
 
-/// The drawable strip either side of the notch, in logical points. Room for
-/// one small figure and its padding beside the camera.
+/// The narrowest drawable strip either side of the notch, in logical points:
+/// room for one small figure and its padding beside the camera.
 const WING: f64 = 30.0;
+
+/// The widest the folded wings grow to fit the profile summary, in logical
+/// points.
+const MAX_WING: f64 = 180.0;
 
 /// A transparent gutter either side of the panel, in logical points, where
 /// the top corners curve outward into the bezel.
@@ -138,8 +142,8 @@ impl Notch {
     }
 
     /// The black panel's width in `phase`, clamped to the display.
-    fn body_width(&self, phase: NotchPhase) -> f64 {
-        let collapsed = self.width() + 2.0 * WING;
+    fn body_width(&self, phase: NotchPhase, wing: f64) -> f64 {
+        let collapsed = self.width() + 2.0 * wing;
         let wanted = if phase == NotchPhase::Expanded {
             collapsed.max(EXPANDED_MIN_WIDTH)
         } else {
@@ -154,22 +158,22 @@ impl Notch {
             .max(0.0)
     }
 
-    fn state(&self, phase: NotchPhase) -> NotchState {
+    fn state(&self, phase: NotchPhase, wing: f64) -> NotchState {
         NotchState {
             phase,
             notch: self.width(),
             height: self.height(),
-            wing: WING,
+            wing,
             fillet: FILLET,
-            body_width: self.body_width(phase),
+            body_width: self.body_width(phase, wing),
             body_max_height: self.body_max_height(),
         }
     }
 
     /// The window frame in `phase`, centred on the notch. `content` is the
     /// height the webview measured below the notch row.
-    fn frame(&self, phase: NotchPhase, content: f64) -> Frame {
-        let width = self.body_width(phase) + 2.0 * FILLET;
+    fn frame(&self, phase: NotchPhase, content: f64, wing: f64) -> Frame {
+        let width = self.body_width(phase, wing) + 2.0 * FILLET;
         let height = if phase == NotchPhase::Expanded {
             self.height() + content.clamp(0.0, self.body_max_height())
         } else {
@@ -251,7 +255,7 @@ mod macos {
 
     use super::{
         in_frame, notch_rect, Frame, Notch, NotchPhase, NotchState, Rect, ALERT_EVENT, LABEL,
-        OPEN_PROFILE_EVENT, STATE_EVENT,
+        MAX_WING, OPEN_PROFILE_EVENT, STATE_EVENT, WING,
     };
     use crate::usage_alerts::UsageAlert;
 
@@ -267,7 +271,7 @@ mod macos {
     /// closes or a resolution change moves or removes the notch.
     const DISPLAY_EVERY: u32 = 30;
 
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     struct Hud {
         notch: Option<Notch>,
         expanded: bool,
@@ -275,6 +279,8 @@ mod macos {
         content: f64,
         /// A usage alert keeps the panel open until then.
         held_until: Option<Instant>,
+        /// The folded wings' width, which the profile summary sets.
+        wing: f64,
     }
 
     static HUD: Mutex<Hud> = Mutex::new(Hud {
@@ -282,6 +288,7 @@ mod macos {
         expanded: false,
         content: 0.0,
         held_until: None,
+        wing: WING,
     });
 
     /// Bumped by every open and close, so a watcher of an older window stops.
@@ -303,7 +310,7 @@ mod macos {
     pub fn state() -> NotchState {
         let hud = hud();
         match hud.notch {
-            Some(notch) => notch.state(phase(&hud)),
+            Some(notch) => notch.state(phase(&hud), hud.wing),
             None => NotchState::hidden(),
         }
     }
@@ -377,6 +384,24 @@ mod macos {
         }
     }
 
+    /// Fit the folded wings to the profile summary the webview measured.
+    pub fn set_wing_width(app: &AppHandle, width: f64) {
+        if !width.is_finite() {
+            return;
+        }
+        {
+            let mut hud = hud();
+            let wing = width.clamp(WING, MAX_WING);
+            if (hud.wing - wing).abs() < 0.5 {
+                return;
+            }
+            hud.wing = wing;
+        }
+        if let Some(window) = app.get_webview_window(LABEL) {
+            apply(&window);
+        }
+    }
+
     /// True when the panel is open in a notch, so an alert has somewhere to
     /// show.
     pub fn available() -> bool {
@@ -416,22 +441,22 @@ mod macos {
     /// Put the window where the cached notch and phase say, and tell the
     /// webview.
     fn apply(window: &WebviewWindow) {
-        let (notch, phase, content) = {
+        let (notch, phase, content, wing) = {
             let hud = hud();
-            (hud.notch, phase(&hud), hud.content)
+            (hud.notch, phase(&hud), hud.content, hud.wing)
         };
         let Some(notch) = notch else {
             let _ = window.hide();
             let _ = window.emit_to(LABEL, STATE_EVENT, NotchState::hidden());
             return;
         };
-        let frame = notch.frame(phase, content);
+        let frame = notch.frame(phase, content, wing);
         // A collapsed panel lets clicks through to the menu bar; an open one
         // takes them, so a profile row can be clicked.
         let _ = window.set_ignore_cursor_events(phase != NotchPhase::Expanded);
         let _ = window.set_size(LogicalSize::new(frame.width, frame.height));
         let _ = window.set_position(PhysicalPosition::new(frame.x, frame.y));
-        let _ = window.emit_to(LABEL, STATE_EVENT, notch.state(phase));
+        let _ = window.emit_to(LABEL, STATE_EVENT, notch.state(phase, wing));
         show_without_activating(window);
     }
 
@@ -453,7 +478,7 @@ mod macos {
     fn current_frame() -> Option<(Frame, f64)> {
         let hud = hud();
         hud.notch
-            .map(|notch| (notch.frame(phase(&hud), hud.content), notch.scale))
+            .map(|notch| (notch.frame(phase(&hud), hud.content, hud.wing), notch.scale))
     }
 
     /// Open the panel on a rest over the notch; fold it a moment after the
@@ -632,6 +657,9 @@ pub fn state() -> NotchState {
 pub fn set_content_height(_app: &tauri::AppHandle, _height: f64) {}
 
 #[cfg(not(target_os = "macos"))]
+pub fn set_wing_width(_app: &tauri::AppHandle, _width: f64) {}
+
+#[cfg(not(target_os = "macos"))]
 pub fn available() -> bool {
     false
 }
@@ -683,7 +711,7 @@ mod tests {
     #[test]
     fn collapsed_the_window_is_the_notch_row_with_a_wing_and_gutter_each_side() {
         let notch = notch();
-        let frame = notch.frame(NotchPhase::Collapsed, 400.0);
+        let frame = notch.frame(NotchPhase::Collapsed, 400.0, WING);
         assert_eq!(frame.width, 204.0 + 2.0 * (WING + FILLET));
         assert_eq!(frame.height, 32.0);
         assert_eq!(frame.y, 0.0);
@@ -697,7 +725,7 @@ mod tests {
     #[test]
     fn expanded_the_window_grows_to_the_content_and_stays_centred() {
         let notch = notch();
-        let frame = notch.frame(NotchPhase::Expanded, 180.0);
+        let frame = notch.frame(NotchPhase::Expanded, 180.0, WING);
         assert_eq!(frame.width, EXPANDED_MIN_WIDTH + 2.0 * FILLET);
         assert_eq!(frame.height, 32.0 + 180.0);
         assert_eq!(
@@ -709,7 +737,7 @@ mod tests {
     #[test]
     fn expanded_content_is_capped_at_the_bottom_of_the_display() {
         let notch = notch();
-        let frame = notch.frame(NotchPhase::Expanded, 5000.0);
+        let frame = notch.frame(NotchPhase::Expanded, 5000.0, WING);
         assert_eq!(frame.height, 32.0 + notch.body_max_height());
         assert_eq!(notch.body_max_height(), (1964.0 - 64.0) / SCALE);
     }
@@ -729,7 +757,7 @@ mod tests {
     #[test]
     fn the_pointer_is_in_the_frame_only_inside_its_physical_bounds() {
         let notch = notch();
-        let frame = notch.frame(NotchPhase::Expanded, 100.0);
+        let frame = notch.frame(NotchPhase::Expanded, 100.0, WING);
         assert!(in_frame(&frame, SCALE, (frame.x + 1.0, frame.y + 1.0)));
         let bottom = frame.y + frame.height * SCALE;
         assert!(in_frame(&frame, SCALE, (frame.x + 1.0, bottom - 1.0)));
@@ -739,12 +767,27 @@ mod tests {
 
     #[test]
     fn the_webview_state_is_in_logical_points() {
-        let state = notch().state(NotchPhase::Collapsed);
+        let state = notch().state(NotchPhase::Collapsed, WING);
         assert_eq!(state.notch, 204.0);
         assert_eq!(state.height, 32.0);
         assert_eq!(state.body_width, 204.0 + 2.0 * WING);
         let json = serde_json::to_value(state).expect("serializable");
         assert_eq!(json["phase"], "collapsed");
         assert_eq!(json["bodyWidth"], 204.0 + 2.0 * WING);
+    }
+
+    #[test]
+    fn wider_wings_widen_the_folded_panel_and_the_open_one_keeps_its_minimum() {
+        let notch = notch();
+        let folded = notch.frame(NotchPhase::Collapsed, 0.0, 90.0);
+        assert_eq!(folded.width, 204.0 + 2.0 * (90.0 + FILLET));
+        assert_eq!(
+            folded.x + folded.width * SCALE / 2.0,
+            notch.rect.x + notch.rect.width / 2.0
+        );
+        let open = notch.frame(NotchPhase::Expanded, 100.0, 90.0);
+        assert_eq!(open.width, 204.0 + 2.0 * (90.0 + FILLET));
+        let narrow = notch.frame(NotchPhase::Expanded, 100.0, WING);
+        assert_eq!(narrow.width, EXPANDED_MIN_WIDTH + 2.0 * FILLET);
     }
 }
