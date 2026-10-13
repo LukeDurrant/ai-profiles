@@ -133,6 +133,7 @@ beforeEach(() => {
     dismissedRepairSessions: {},
     notchHudOff: false,
     notchHiddenProfiles: [],
+    usageAlertThresholds: null,
   })
   vi.mocked(listSessions).mockReset()
   vi.mocked(archiveSession).mockReset().mockResolvedValue(undefined)

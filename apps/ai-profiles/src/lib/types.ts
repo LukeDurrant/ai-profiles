@@ -159,6 +159,11 @@ export type AppState = {
   notchHudOff: boolean
   /** The profiles (or default entries) left out of the notch HUD. */
   notchHiddenProfiles: Array<string>
+  /**
+   * The usage percentages that drop the notch panel open, or `null` for the
+   * defaults (50, 75, 90, 100). An empty list turns usage alerts off.
+   */
+  usageAlertThresholds: Array<number> | null
 }
 
 export type AppStatePatch = {
@@ -187,6 +192,8 @@ export type AppStatePatch = {
   notchHudOff?: boolean
   /** Shows one profile in the notch HUD, or leaves it out. */
   notchProfile?: { profileId: string; shown: boolean }
+  /** Sets the usage alert thresholds. An empty list turns alerts off. */
+  usageAlertThresholds?: Array<number>
 }
 
 /**

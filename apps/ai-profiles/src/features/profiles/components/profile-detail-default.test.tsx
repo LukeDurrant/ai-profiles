@@ -71,6 +71,7 @@ const appState: AppState = {
   dismissedRepairSessions: {},
   notchHudOff: false,
   notchHiddenProfiles: [],
+  usageAlertThresholds: null,
 }
 
 const guiDataDir = '/Users/ada/Library/Application Support/Claude'

@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { SidebarEntry } from '@/lib/types'
-import type { NotchState } from '../api/notch-ipc'
+import type { NotchState, UsageAlert } from '../api/notch-ipc'
 import type { WeeklyMeter } from '../lib/weekly-meter'
 
 import { Suspense, useEffect, useRef, useState } from 'react'
@@ -13,8 +13,15 @@ import { appSpecs } from '@/lib/app-registry'
 import { useAppState } from '@/lib/app-state/use-app-state'
 import { queryKeys } from '@/lib/query/keys'
 
-import { getNotchState, notchHidden, onNotchState, openProfileFromNotch, setNotchContentHeight } from '../api/notch-ipc'
-import { formatResetsIn, highestPercent, meterLevel, weeklyMeter } from '../lib/weekly-meter'
+import {
+  getNotchState,
+  notchHidden,
+  onNotchAlert,
+  onNotchState,
+  openProfileFromNotch,
+  setNotchContentHeight,
+} from '../api/notch-ipc'
+import { alertCopy, formatResetsIn, highestPercent, meterLevel, weeklyMeter } from '../lib/weekly-meter'
 import { LedBar } from './led-bar'
 
 /**
@@ -32,6 +39,7 @@ const usageStaleMs = 60_000
 export function NotchHud() {
   const queryClient = useQueryClient()
   const [state, setState] = useState<NotchState>(notchHidden)
+  const [alert, setAlert] = useState<UsageAlert | null>(null)
 
   // The shell owns the geometry; the webview follows its events. The first
   // read covers a panel that opened before this listener existed.
@@ -48,12 +56,22 @@ export function NotchHud() {
         // the panel last opened.
         void queryClient.invalidateQueries({ queryKey: queryKeys.profiles.all })
         void queryClient.invalidateQueries({ queryKey: queryKeys.appState })
+      } else {
+        // The alert belongs to the open it caused.
+        setAlert(null)
       }
       setState(next)
+    })
+    // The shell drops the panel open for an alert right after this; the
+    // crossed profile's meter fetches afresh to match it.
+    const unlistenAlert = onNotchAlert((next) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.profileUsage(next.profileId) })
+      setAlert(next)
     })
     return () => {
       current = false
       void unlisten.then((stop) => stop())
+      void unlistenAlert.then((stop) => stop())
     }
   }, [queryClient])
 
@@ -61,8 +79,8 @@ export function NotchHud() {
     return null
   }
   return (
-    <Suspense fallback={<NotchFrame state={state} entries={[]} meters={[]} />}>
-      <NotchPanel state={state} />
+    <Suspense fallback={<NotchFrame state={state} alert={null} entries={[]} meters={[]} />}>
+      <NotchPanel state={state} alert={alert} />
     </Suspense>
   )
 }
@@ -74,7 +92,7 @@ type Row = {
   problem: string | null
 }
 
-function NotchPanel({ state }: { state: NotchState }) {
+function NotchPanel({ state, alert }: { state: NotchState; alert: UsageAlert | null }) {
   const { state: appState } = useAppState()
   const entries = useSidebarEntries().filter((entry) => {
     if (appState.notchHiddenProfiles.includes(entryId(entry))) {
@@ -102,15 +120,17 @@ function NotchPanel({ state }: { state: NotchState }) {
       problem: quota ? null : problemText(result?.error),
     }
   })
-  return <NotchFrame state={state} entries={rows} meters={rows.map((row) => row.meter)} />
+  return <NotchFrame state={state} alert={alert} entries={rows} meters={rows.map((row) => row.meter)} />
 }
 
 function NotchFrame({
   state,
+  alert,
   entries,
   meters,
 }: {
   state: NotchState
+  alert: UsageAlert | null
   entries: Array<Row>
   meters: Array<WeeklyMeter | null>
 }) {
@@ -164,9 +184,10 @@ function NotchFrame({
       </header>
       <div className="notch-body" style={{ maxHeight: state.bodyMaxHeight }}>
         <div ref={rowsRef} className="notch-rows">
+          <AlertBanner alert={alert} entries={entries} />
           {entries.length === 0 ? <p className="notch-empty">No profiles with usage</p> : null}
           {entries.map((row) => (
-            <ProfileMeter key={entryId(row.entry)} row={row} />
+            <ProfileMeter key={entryId(row.entry)} row={row} alerted={alert?.profileId === entryId(row.entry)} />
           ))}
         </div>
       </div>
@@ -174,13 +195,30 @@ function NotchFrame({
   )
 }
 
-function ProfileMeter({ row }: { row: Row }) {
+/** Which limit dropped the panel open, above the meters. */
+function AlertBanner({ alert, entries }: { alert: UsageAlert | null; entries: Array<Row> }) {
+  const row = entries.find((candidate) => entryId(candidate.entry) === alert?.profileId)
+  if (!(alert && row)) {
+    return null
+  }
+  const name = row.entry.kind === 'managed' ? row.entry.profile.name : row.entry.entry.name
+  const copy = alertCopy(alert, name)
+  return (
+    <div className="notch-alert" role="status" data-ahead={alert.ahead}>
+      <span className="notch-alert-title">{copy.title}</span>
+      <span className="notch-alert-detail">{copy.detail}</span>
+    </div>
+  )
+}
+
+function ProfileMeter({ row, alerted }: { row: Row; alerted: boolean }) {
   const { entry, meter } = row
   const percent = meter?.percent ?? null
   return (
     <button
       type="button"
       className="notch-row"
+      data-alerted={alerted || undefined}
       onClick={() => {
         void openProfileFromNotch(entryId(entry))
       }}

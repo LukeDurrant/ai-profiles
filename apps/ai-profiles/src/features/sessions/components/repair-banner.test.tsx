@@ -34,6 +34,7 @@ function appState(dismissedRepairSessions: AppState['dismissedRepairSessions'] =
     dismissedRepairSessions,
     notchHudOff: false,
     notchHiddenProfiles: [],
+    usageAlertThresholds: null,
   }
 }
 

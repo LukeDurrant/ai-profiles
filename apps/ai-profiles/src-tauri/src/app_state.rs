@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::app_kind::AppKind;
 use crate::error::{AppError, AppResult};
 use crate::paths::{app_state_json_path, ensure_app_dir};
+use crate::usage_alerts;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +58,19 @@ pub struct AppState {
     /// notch HUD.
     #[serde(default)]
     pub notch_hidden_profiles: BTreeSet<String>,
+    /// The usage percentages that drop the notch panel open, or `None` for
+    /// the defaults. An empty list turns usage alerts off.
+    #[serde(default)]
+    pub usage_alert_thresholds: Option<Vec<u8>>,
+}
+
+impl AppState {
+    /// The usage percentages that drop the notch panel open.
+    pub fn alert_thresholds(&self) -> Vec<u8> {
+        self.usage_alert_thresholds
+            .clone()
+            .unwrap_or_else(|| usage_alerts::DEFAULT_THRESHOLDS.to_vec())
+    }
 }
 
 /// Renames one app's stock-install entry. An empty (or all-whitespace) name
@@ -118,6 +132,8 @@ pub struct AppStatePatch {
     pub notch_hud_off: Option<bool>,
     #[serde(default)]
     pub notch_profile: Option<NotchProfile>,
+    #[serde(default)]
+    pub usage_alert_thresholds: Option<Vec<u8>>,
 }
 
 pub fn load() -> AppResult<AppState> {
@@ -191,6 +207,9 @@ pub fn apply(patch: AppStatePatch) -> AppResult<AppState> {
     }
     if let Some(off) = patch.notch_hud_off {
         state.notch_hud_off = off;
+    }
+    if let Some(thresholds) = patch.usage_alert_thresholds {
+        state.usage_alert_thresholds = Some(usage_alerts::normalise_thresholds(&thresholds));
     }
     if let Some(notch) = patch.notch_profile {
         if notch.shown {
@@ -304,6 +323,7 @@ mod tests {
             dismissed_repair_sessions: BTreeMap::from([("p1".into(), vec!["s1".into()])]),
             notch_hud_off: true,
             notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
         };
         save(&state).unwrap();
         let loaded = load().unwrap();
@@ -326,6 +346,7 @@ mod tests {
             dismissed_repair_sessions: BTreeMap::new(),
             notch_hud_off: false,
             notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
         })
         .unwrap();
 
@@ -358,6 +379,7 @@ mod tests {
             dismissed_repair_sessions: BTreeMap::new(),
             notch_hud_off: false,
             notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
         })
         .unwrap();
 
@@ -423,6 +445,7 @@ mod tests {
             dismissed_repair_sessions: BTreeMap::new(),
             notch_hud_off: false,
             notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
         })
         .unwrap();
         let after = apply(AppStatePatch {
@@ -602,6 +625,23 @@ mod tests {
 
         forget_profile("p2").unwrap();
         assert!(load().unwrap().notch_hidden_profiles.is_empty());
+        purge();
+    }
+
+    #[test]
+    fn alert_thresholds_default_until_set_and_an_empty_list_turns_them_off() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        purge();
+        assert_eq!(load().unwrap().alert_thresholds(), vec![50, 75, 90, 100]);
+        let set = |thresholds: Vec<u8>| {
+            apply(AppStatePatch {
+                usage_alert_thresholds: Some(thresholds),
+                ..AppStatePatch::default()
+            })
+            .unwrap()
+        };
+        assert_eq!(set(vec![95, 80, 80]).alert_thresholds(), vec![80, 95]);
+        assert!(set(Vec::new()).alert_thresholds().is_empty());
         purge();
     }
 }

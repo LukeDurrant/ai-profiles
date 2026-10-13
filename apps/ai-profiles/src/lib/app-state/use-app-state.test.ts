@@ -20,6 +20,7 @@ function makeAppState(overrides: Partial<AppState> = {}): AppState {
     dismissedRepairSessions: {},
     notchHudOff: false,
     notchHiddenProfiles: [],
+    usageAlertThresholds: null,
     ...overrides,
   }
 }

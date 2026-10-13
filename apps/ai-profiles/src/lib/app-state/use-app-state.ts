@@ -73,6 +73,7 @@ export function computeOptimisticAppState(previous: AppState, patch: AppStatePat
     dismissedRepairSessions: withDismissedRepair(previous.dismissedRepairSessions, patch.dismissedRepair),
     notchHudOff: patch.notchHudOff ?? previous.notchHudOff,
     notchHiddenProfiles: withNotchProfile(previous.notchHiddenProfiles, patch.notchProfile),
+    usageAlertThresholds: patch.usageAlertThresholds ?? previous.usageAlertThresholds,
   }
 }
 
