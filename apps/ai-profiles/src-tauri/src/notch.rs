@@ -103,8 +103,10 @@ impl NotchState {
     }
 }
 
-/// A rectangle in physical desktop pixels, origin at the top-left of the
-/// primary display.
+/// A rectangle in AppKit screen points: origin at the bottom-left of the
+/// primary display, `y` growing upward, as `NSScreen` and `NSEvent` report
+/// it. One space for every display, whatever its backing scale, so nothing
+/// converts between pixels and points.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Rect {
     x: f64,
@@ -113,56 +115,51 @@ struct Rect {
     height: f64,
 }
 
-/// A notch in physical desktop pixels, with its display's backing scale and
-/// the display's area below the menu bar.
+impl Rect {
+    fn right(&self) -> f64 {
+        self.x + self.width
+    }
+
+    fn top(&self) -> f64 {
+        self.y + self.height
+    }
+
+    /// True when `point` is inside, its top edge included: the pointer
+    /// pressed against the top of the screen sits on it.
+    fn contains(&self, (x, y): (f64, f64)) -> bool {
+        x >= self.x && x < self.right() && y >= self.y && y <= self.top()
+    }
+}
+
+/// A notch and the area of its display below the menu bar, in screen points.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Notch {
     rect: Rect,
-    scale: f64,
     available: Rect,
 }
 
-/// Where the window goes and how big it is: the origin in physical pixels,
-/// the size in logical points.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Frame {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-}
-
 impl Notch {
-    fn width(&self) -> f64 {
-        self.rect.width / self.scale
-    }
-
-    fn height(&self) -> f64 {
-        self.rect.height / self.scale
-    }
-
     /// The black panel's width in `phase`, clamped to the display.
     fn body_width(&self, phase: NotchPhase, wing: f64) -> f64 {
-        let collapsed = self.width() + 2.0 * wing;
+        let collapsed = self.rect.width + 2.0 * wing;
         let wanted = if phase == NotchPhase::Expanded {
             collapsed.max(EXPANDED_MIN_WIDTH)
         } else {
             collapsed
         };
-        wanted.min(self.available.width / self.scale - 2.0 * FILLET)
+        wanted.min(self.available.width - 2.0 * FILLET)
     }
 
     /// The room below the notch row, down to the bottom of the display.
     fn body_max_height(&self) -> f64 {
-        ((self.available.y + self.available.height - self.rect.y - self.rect.height) / self.scale)
-            .max(0.0)
+        (self.rect.y - self.available.y).max(0.0)
     }
 
     fn state(&self, phase: NotchPhase, wing: f64) -> NotchState {
         NotchState {
             phase,
-            notch: self.width(),
-            height: self.height(),
+            notch: self.rect.width,
+            height: self.rect.height,
             wing,
             fillet: FILLET,
             body_width: self.body_width(phase, wing),
@@ -170,21 +167,21 @@ impl Notch {
         }
     }
 
-    /// The window frame in `phase`, centred on the notch. `content` is the
-    /// height the webview measured below the notch row.
-    fn frame(&self, phase: NotchPhase, content: f64, wing: f64) -> Frame {
+    /// The window frame in `phase`: hung from the top of the display,
+    /// centred on the notch. `content` is the height the webview measured
+    /// below the notch row.
+    fn frame(&self, phase: NotchPhase, content: f64, wing: f64) -> Rect {
         let width = self.body_width(phase, wing) + 2.0 * FILLET;
         let height = if phase == NotchPhase::Expanded {
-            self.height() + content.clamp(0.0, self.body_max_height())
+            self.rect.height + content.clamp(0.0, self.body_max_height())
         } else {
-            self.height()
+            self.rect.height
         };
         let centre = self.rect.x + self.rect.width / 2.0;
-        let right = self.available.x + self.available.width - width * self.scale;
-        Frame {
-            x: (centre - width * self.scale / 2.0)
-                .clamp(self.available.x, right.max(self.available.x)),
-            y: self.rect.y,
+        let rightmost = (self.available.right() - width).max(self.available.x);
+        Rect {
+            x: (centre - width / 2.0).clamp(self.available.x, rightmost),
+            y: self.rect.top() - height,
             width,
             height,
         }
@@ -192,51 +189,36 @@ impl Notch {
 
     /// True when `cursor` is in the notch or just around it.
     fn in_hotspot(&self, cursor: (f64, f64)) -> bool {
-        let (x, y) = cursor;
-        let side = HOTSPOT_SIDE * self.scale;
-        let below = HOTSPOT_BELOW * self.scale;
-        x >= self.rect.x - side
-            && x < self.rect.x + self.rect.width + side
-            && y >= self.rect.y
-            && y < self.rect.y + self.rect.height + below
+        Rect {
+            x: self.rect.x - HOTSPOT_SIDE,
+            y: self.rect.y - HOTSPOT_BELOW,
+            width: self.rect.width + 2.0 * HOTSPOT_SIDE,
+            height: self.rect.height + HOTSPOT_BELOW,
+        }
+        .contains(cursor)
     }
 }
 
 /// The notch of a display, or `None` when the display has none.
 ///
-/// `display` is the display frame in physical pixels. `safe_top` is the top
-/// safe-area inset and `aux_left` and `aux_right` are the widths of the menu
-/// bar areas either side of the camera housing, all in logical points. The
-/// notch is the gap between the two areas, spread over the cutout's edge.
-fn notch_rect(
-    display: &Rect,
-    scale: f64,
-    safe_top: f64,
-    aux_left: f64,
-    aux_right: f64,
-) -> Option<Rect> {
-    if safe_top <= 0.0 || scale <= 0.0 {
+/// `display` is the display frame. `safe_top` is the top safe-area inset and
+/// `aux_left` and `aux_right` are the widths of the menu bar areas either
+/// side of the camera housing. The notch is the gap between the two areas,
+/// spread over the cutout's edge.
+fn notch_rect(display: &Rect, safe_top: f64, aux_left: f64, aux_right: f64) -> Option<Rect> {
+    if safe_top <= 0.0 {
         return None;
     }
-    let gap = display.width / scale - aux_left - aux_right;
+    let gap = display.width - aux_left - aux_right;
     if gap <= 0.0 {
         return None;
     }
     Some(Rect {
-        x: display.x + (aux_left - NOTCH_SPREAD / 2.0) * scale,
-        y: display.y,
-        width: (gap + NOTCH_SPREAD) * scale,
-        height: safe_top * scale,
+        x: display.x + aux_left - NOTCH_SPREAD / 2.0,
+        y: display.top() - safe_top,
+        width: gap + NOTCH_SPREAD,
+        height: safe_top,
     })
-}
-
-/// True when `cursor` is inside `frame`.
-fn in_frame(frame: &Frame, scale: f64, cursor: (f64, f64)) -> bool {
-    let (x, y) = cursor;
-    x >= frame.x
-        && x < frame.x + frame.width * scale
-        && y >= frame.y
-        && y < frame.y + frame.height * scale
 }
 
 #[cfg(target_os = "macos")]
@@ -248,14 +230,11 @@ mod macos {
     use std::sync::{Mutex, MutexGuard};
     use std::time::{Duration, Instant};
 
-    use tauri::{
-        AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindow,
-        WebviewWindowBuilder,
-    };
+    use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
     use super::{
-        in_frame, notch_rect, Frame, Notch, NotchPhase, NotchState, Rect, ALERT_EVENT, LABEL,
-        MAX_WING, OPEN_PROFILE_EVENT, STATE_EVENT, WING,
+        notch_rect, Notch, NotchPhase, NotchState, Rect, ALERT_EVENT, LABEL, MAX_WING,
+        OPEN_PROFILE_EVENT, STATE_EVENT, WING,
     };
     use crate::usage_alerts::UsageAlert;
 
@@ -454,10 +433,8 @@ mod macos {
         // A collapsed panel lets clicks through to the menu bar; an open one
         // takes them, so a profile row can be clicked.
         let _ = window.set_ignore_cursor_events(phase != NotchPhase::Expanded);
-        let _ = window.set_size(LogicalSize::new(frame.width, frame.height));
-        let _ = window.set_position(PhysicalPosition::new(frame.x, frame.y));
         let _ = window.emit_to(LABEL, STATE_EVENT, notch.state(phase, wing));
-        show_without_activating(window);
+        place(window, frame);
     }
 
     fn set_expanded(window: &WebviewWindow, expanded: bool) {
@@ -475,10 +452,10 @@ mod macos {
     }
 
     /// The window frame now, for the pointer test.
-    fn current_frame() -> Option<(Frame, f64)> {
+    fn current_frame() -> Option<Rect> {
         let hud = hud();
         hud.notch
-            .map(|notch| (notch.frame(phase(&hud), hud.content, hud.wing), notch.scale))
+            .map(|notch| notch.frame(phase(&hud), hud.content, hud.wing))
     }
 
     /// Open the panel on a rest over the notch; fold it a moment after the
@@ -504,10 +481,7 @@ mod macos {
                         }
                     });
                 }
-                let Ok(cursor) = window.cursor_position() else {
-                    continue;
-                };
-                let cursor = (cursor.x, cursor.y);
+                let cursor = cursor_location();
                 let (notch, expanded, held) = {
                     let hud = hud();
                     let held = hud.held_until.is_some_and(|until| Instant::now() < until);
@@ -518,9 +492,8 @@ mod macos {
                     left_at = None;
                     continue;
                 };
-                let in_frame =
-                    current_frame().is_some_and(|(frame, scale)| in_frame(&frame, scale, cursor));
-                let near = notch.in_hotspot(cursor) || in_frame;
+                let over_panel = current_frame().is_some_and(|frame| frame.contains(cursor));
+                let near = notch.in_hotspot(cursor) || over_panel;
                 if expanded {
                     rested_since = None;
                     if near || held {
@@ -543,14 +516,19 @@ mod macos {
         });
     }
 
-    /// Bring the panel on screen without making ai-profiles the active app.
+    /// Put the panel at `frame` and bring it on screen, without making
+    /// ai-profiles the active app.
     ///
-    /// `WebviewWindow::show` makes the window key, which activates the app
-    /// and raises the main window with it. A HUD only wants to be seen.
-    fn show_without_activating(window: &WebviewWindow) {
+    /// The frame goes straight to AppKit in screen points. Tauri's position
+    /// setters convert pixels with the scale of whichever display the window
+    /// is on at the time, which put the panel in the middle of a screen when
+    /// the displays differed. `WebviewWindow::show` makes the window key,
+    /// which activates the app and raises the main window with it.
+    fn place(window: &WebviewWindow, frame: Rect) {
         let native = window.clone();
         let _ = window.run_on_main_thread(move || {
             use objc2_app_kit::NSWindow;
+            use objc2_foundation::{NSPoint, NSRect, NSSize};
 
             let Ok(pointer) = native.ns_window() else {
                 return;
@@ -558,8 +536,21 @@ mod macos {
             // SAFETY: Tauri hands out the live NSWindow of this webview
             // window, and this runs on the main thread.
             let ns_window: &NSWindow = unsafe { &*pointer.cast::<NSWindow>() };
+            ns_window.setFrame_display(
+                NSRect::new(
+                    NSPoint::new(frame.x, frame.y),
+                    NSSize::new(frame.width, frame.height),
+                ),
+                true,
+            );
             ns_window.orderFrontRegardless();
         });
+    }
+
+    /// The pointer in screen points.
+    fn cursor_location() -> (f64, f64) {
+        let point = objc2_app_kit::NSEvent::mouseLocation();
+        (point.x, point.y)
     }
 
     /// Lift the window over the menu bar, onto every Space, fullscreen ones
@@ -604,37 +595,23 @@ mod macos {
     fn read_notch(mtm: objc2_foundation::MainThreadMarker) -> Option<Notch> {
         use objc2_app_kit::NSScreen;
 
-        let screens = NSScreen::screens(mtm);
-        let primary_height = screens.firstObject()?.frame().size.height;
-        screens.iter().find_map(|screen| {
+        NSScreen::screens(mtm).iter().find_map(|screen| {
             let insets = screen.safeAreaInsets();
-            if insets.top <= 0.0 {
-                return None;
-            }
-            let scale = screen.backingScaleFactor();
-            let display = desktop_rect(screen.frame(), primary_height, scale);
             let left = screen.auxiliaryTopLeftArea().size.width;
             let right = screen.auxiliaryTopRightArea().size.width;
-            let available = desktop_rect(screen.visibleFrame(), primary_height, scale);
-            notch_rect(&display, scale, insets.top, left, right).map(|rect| Notch {
-                rect,
-                scale,
-                available,
+            notch_rect(&rect(screen.frame()), insets.top, left, right).map(|notch| Notch {
+                rect: notch,
+                available: rect(screen.visibleFrame()),
             })
         })
     }
 
-    /// A Cocoa screen frame as a desktop rect in physical pixels.
-    ///
-    /// Cocoa measures from the bottom-left of the primary display. The
-    /// desktop, as the window and cursor report it, measures from the
-    /// top-left of the primary display, scaled by the display's own factor.
-    fn desktop_rect(frame: objc2_foundation::NSRect, primary_height: f64, scale: f64) -> Rect {
+    fn rect(frame: objc2_foundation::NSRect) -> Rect {
         Rect {
-            x: frame.origin.x * scale,
-            y: (primary_height - frame.origin.y - frame.size.height) * scale,
-            width: frame.size.width * scale,
-            height: frame.size.height * scale,
+            x: frame.origin.x,
+            y: frame.origin.y,
+            width: frame.size.width,
+            height: frame.size.height,
         }
     }
 }
@@ -671,41 +648,51 @@ pub fn open_profile(_app: &tauri::AppHandle, _id: String) {}
 mod tests {
     use super::*;
 
-    /// A 14-inch MacBook Pro display at 2x: 1512 x 982 logical.
+    /// A 14-inch MacBook Pro display, 1512 x 982 points, as the primary
+    /// display: its bottom-left is the origin.
     const DISPLAY: Rect = Rect {
         x: 0.0,
         y: 0.0,
-        width: 3024.0,
-        height: 1964.0,
+        width: 1512.0,
+        height: 982.0,
     };
-    const SCALE: f64 = 2.0;
+
+    /// The display less the 32-point menu bar.
+    const VISIBLE: Rect = Rect {
+        height: 950.0,
+        ..DISPLAY
+    };
+
+    fn notch_on(display: Rect, visible: Rect) -> Notch {
+        Notch {
+            rect: notch_rect(&display, 32.0, 656.0, 656.0).expect("a notched display"),
+            available: visible,
+        }
+    }
 
     fn notch() -> Notch {
-        Notch {
-            rect: notch_rect(&DISPLAY, SCALE, 32.0, 656.0, 656.0).expect("a notched display"),
-            scale: SCALE,
-            available: Rect {
-                y: 64.0,
-                height: 1900.0,
-                ..DISPLAY
-            },
-        }
+        notch_on(DISPLAY, VISIBLE)
+    }
+
+    fn centre(rect: &Rect) -> f64 {
+        rect.x + rect.width / 2.0
     }
 
     #[test]
     fn the_notch_is_the_gap_between_the_menu_bar_areas_plus_the_spread() {
         let rect = notch().rect;
-        assert_eq!(rect.x, (656.0 - 2.0) * SCALE);
-        assert_eq!(rect.y, 0.0);
-        assert_eq!(rect.width, (1512.0 - 656.0 - 656.0 + 4.0) * SCALE);
-        assert_eq!(rect.height, 32.0 * SCALE);
+        assert_eq!(rect.x, 656.0 - 2.0);
+        assert_eq!(rect.width, 1512.0 - 656.0 - 656.0 + 4.0);
+        // It hangs from the top of the display.
+        assert_eq!(rect.top(), 982.0);
+        assert_eq!(rect.height, 32.0);
     }
 
     #[test]
     fn a_display_without_a_safe_area_has_no_notch() {
-        assert_eq!(notch_rect(&DISPLAY, SCALE, 0.0, 0.0, 0.0), None);
+        assert_eq!(notch_rect(&DISPLAY, 0.0, 0.0, 0.0), None);
         // Menu bar areas that meet leave no gap.
-        assert_eq!(notch_rect(&DISPLAY, SCALE, 32.0, 756.0, 756.0), None);
+        assert_eq!(notch_rect(&DISPLAY, 32.0, 756.0, 756.0), None);
     }
 
     #[test]
@@ -714,66 +701,71 @@ mod tests {
         let frame = notch.frame(NotchPhase::Collapsed, 400.0, WING);
         assert_eq!(frame.width, 204.0 + 2.0 * (WING + FILLET));
         assert_eq!(frame.height, 32.0);
-        assert_eq!(frame.y, 0.0);
-        // Centred on the notch.
-        assert_eq!(
-            frame.x + frame.width * SCALE / 2.0,
-            notch.rect.x + notch.rect.width / 2.0
-        );
+        assert_eq!(frame.top(), 982.0);
+        assert_eq!(centre(&frame), centre(&notch.rect));
     }
 
     #[test]
-    fn expanded_the_window_grows_to_the_content_and_stays_centred() {
+    fn expanded_the_window_grows_down_to_the_content_and_stays_centred() {
         let notch = notch();
         let frame = notch.frame(NotchPhase::Expanded, 180.0, WING);
         assert_eq!(frame.width, EXPANDED_MIN_WIDTH + 2.0 * FILLET);
         assert_eq!(frame.height, 32.0 + 180.0);
-        assert_eq!(
-            frame.x + frame.width * SCALE / 2.0,
-            notch.rect.x + notch.rect.width / 2.0
-        );
+        assert_eq!(frame.top(), 982.0);
+        assert_eq!(centre(&frame), centre(&notch.rect));
     }
 
     #[test]
     fn expanded_content_is_capped_at_the_bottom_of_the_display() {
         let notch = notch();
+        assert_eq!(notch.body_max_height(), 950.0);
         let frame = notch.frame(NotchPhase::Expanded, 5000.0, WING);
-        assert_eq!(frame.height, 32.0 + notch.body_max_height());
-        assert_eq!(notch.body_max_height(), (1964.0 - 64.0) / SCALE);
+        assert_eq!(frame.height, 32.0 + 950.0);
+        assert_eq!(frame.y, 0.0);
+    }
+
+    #[test]
+    fn a_notched_display_beside_a_taller_primary_keeps_the_panel_on_its_own_top() {
+        // The built-in display sits right of a 1920 x 1080 primary, its
+        // bottom 100 points above the primary's: the arrangement in which
+        // the panel used to land mid-screen.
+        let display = Rect {
+            x: 1920.0,
+            y: 100.0,
+            ..DISPLAY
+        };
+        let visible = Rect {
+            height: 950.0,
+            ..display
+        };
+        let notch = notch_on(display, visible);
+        for phase in [NotchPhase::Collapsed, NotchPhase::Expanded] {
+            let frame = notch.frame(phase, 200.0, 60.0);
+            assert_eq!(frame.top(), display.top());
+            assert_eq!(centre(&frame), 1920.0 + 1512.0 / 2.0);
+        }
     }
 
     #[test]
     fn the_hotspot_reaches_a_little_past_the_notch() {
         let notch = notch();
         let rect = notch.rect;
-        assert!(notch.in_hotspot((rect.x + 10.0, 5.0)));
-        assert!(notch.in_hotspot((rect.x - 19.0, 5.0)));
-        assert!(!notch.in_hotspot((rect.x - 21.0, 5.0)));
-        assert!(notch.in_hotspot((rect.x + 10.0, rect.height + 9.0)));
-        assert!(!notch.in_hotspot((rect.x + 10.0, rect.height + 11.0)));
-        assert!(!notch.in_hotspot((rect.x + 10.0, -1.0)));
+        assert!(notch.in_hotspot((rect.x + 5.0, 975.0)));
+        // Pressed against the top of the screen.
+        assert!(notch.in_hotspot((rect.x + 5.0, 982.0)));
+        assert!(notch.in_hotspot((rect.x - 9.0, 975.0)));
+        assert!(!notch.in_hotspot((rect.x - 11.0, 975.0)));
+        assert!(notch.in_hotspot((rect.x + 5.0, rect.y - 4.0)));
+        assert!(!notch.in_hotspot((rect.x + 5.0, rect.y - 6.0)));
     }
 
     #[test]
-    fn the_pointer_is_in_the_frame_only_inside_its_physical_bounds() {
-        let notch = notch();
-        let frame = notch.frame(NotchPhase::Expanded, 100.0, WING);
-        assert!(in_frame(&frame, SCALE, (frame.x + 1.0, frame.y + 1.0)));
-        let bottom = frame.y + frame.height * SCALE;
-        assert!(in_frame(&frame, SCALE, (frame.x + 1.0, bottom - 1.0)));
-        assert!(!in_frame(&frame, SCALE, (frame.x + 1.0, bottom + 1.0)));
-        assert!(!in_frame(&frame, SCALE, (frame.x - 1.0, frame.y + 1.0)));
-    }
-
-    #[test]
-    fn the_webview_state_is_in_logical_points() {
-        let state = notch().state(NotchPhase::Collapsed, WING);
-        assert_eq!(state.notch, 204.0);
-        assert_eq!(state.height, 32.0);
-        assert_eq!(state.body_width, 204.0 + 2.0 * WING);
-        let json = serde_json::to_value(state).expect("serializable");
-        assert_eq!(json["phase"], "collapsed");
-        assert_eq!(json["bodyWidth"], 204.0 + 2.0 * WING);
+    fn the_pointer_is_over_the_panel_only_inside_its_frame() {
+        let frame = notch().frame(NotchPhase::Expanded, 100.0, WING);
+        assert!(frame.contains((frame.x + 1.0, frame.top() - 1.0)));
+        assert!(frame.contains((frame.x + 1.0, frame.y)));
+        assert!(!frame.contains((frame.x + 1.0, frame.y - 1.0)));
+        assert!(!frame.contains((frame.x - 1.0, frame.top() - 1.0)));
     }
 
     #[test]
@@ -781,13 +773,21 @@ mod tests {
         let notch = notch();
         let folded = notch.frame(NotchPhase::Collapsed, 0.0, 90.0);
         assert_eq!(folded.width, 204.0 + 2.0 * (90.0 + FILLET));
-        assert_eq!(
-            folded.x + folded.width * SCALE / 2.0,
-            notch.rect.x + notch.rect.width / 2.0
-        );
+        assert_eq!(centre(&folded), centre(&notch.rect));
         let open = notch.frame(NotchPhase::Expanded, 100.0, 90.0);
         assert_eq!(open.width, 204.0 + 2.0 * (90.0 + FILLET));
         let narrow = notch.frame(NotchPhase::Expanded, 100.0, WING);
         assert_eq!(narrow.width, EXPANDED_MIN_WIDTH + 2.0 * FILLET);
+    }
+
+    #[test]
+    fn the_webview_state_is_in_points() {
+        let state = notch().state(NotchPhase::Collapsed, WING);
+        assert_eq!(state.notch, 204.0);
+        assert_eq!(state.height, 32.0);
+        assert_eq!(state.body_width, 204.0 + 2.0 * WING);
+        let json = serde_json::to_value(state).expect("serializable");
+        assert_eq!(json["phase"], "collapsed");
+        assert_eq!(json["bodyWidth"], 204.0 + 2.0 * WING);
     }
 }
