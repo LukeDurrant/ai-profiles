@@ -1,0 +1,240 @@
+import type { CSSProperties } from 'react'
+import type { SidebarEntry } from '@/lib/types'
+import type { NotchState } from '../api/notch-ipc'
+import type { WeeklyMeter } from '../lib/weekly-meter'
+
+import { Suspense, useEffect, useRef, useState } from 'react'
+
+import { useQueries, useQueryClient } from '@tanstack/react-query'
+
+import { fetchUsableUsage, UsageUnavailableError } from '@/features/profiles/api/use-profile-usage'
+import { appFromEntry, entryId, useSidebarEntries } from '@/features/profiles/api/use-sidebar-entries'
+import { appSpecs } from '@/lib/app-registry'
+import { useAppState } from '@/lib/app-state/use-app-state'
+import { queryKeys } from '@/lib/query/keys'
+
+import { getNotchState, notchHidden, onNotchState, openProfileFromNotch, setNotchContentHeight } from '../api/notch-ipc'
+import { formatResetsIn, highestPercent, meterLevel, weeklyMeter } from '../lib/weekly-meter'
+import { LedBar } from './led-bar'
+
+/**
+ * How long a reading stays fresh. The panel fetches only while it is open —
+ * someone is looking at it — so hovering the notch twice in a minute costs
+ * nothing extra, and nothing polls while nobody is around.
+ */
+const usageStaleMs = 60_000
+
+/**
+ * The notch HUD: a black panel in the notch of the built-in display. Folded,
+ * it shows the most-used weekly limit in its wing; open, one weekly meter per
+ * profile with usage.
+ */
+export function NotchHud() {
+  const queryClient = useQueryClient()
+  const [state, setState] = useState<NotchState>(notchHidden)
+
+  // The shell owns the geometry; the webview follows its events. The first
+  // read covers a panel that opened before this listener existed.
+  useEffect(() => {
+    let current = true
+    void getNotchState().then((initial) => {
+      if (current) {
+        setState((previous) => (previous.phase === 'hidden' ? initial : previous))
+      }
+    })
+    const unlisten = onNotchState((next) => {
+      if (next.phase === 'expanded') {
+        // Profiles may have been added or renamed in the main window since
+        // the panel last opened.
+        void queryClient.invalidateQueries({ queryKey: queryKeys.profiles.all })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.appState })
+      }
+      setState(next)
+    })
+    return () => {
+      current = false
+      void unlisten.then((stop) => stop())
+    }
+  }, [queryClient])
+
+  if (state.phase === 'hidden') {
+    return null
+  }
+  return (
+    <Suspense fallback={<NotchFrame state={state} entries={[]} meters={[]} />}>
+      <NotchPanel state={state} />
+    </Suspense>
+  )
+}
+
+type Row = {
+  entry: SidebarEntry
+  meter: WeeklyMeter | null
+  /** Why there is no meter, when the fetch failed and nothing is cached. */
+  problem: string | null
+}
+
+function NotchPanel({ state }: { state: NotchState }) {
+  const { state: appState } = useAppState()
+  const entries = useSidebarEntries().filter((entry) => {
+    if (appState.notchHiddenProfiles.includes(entryId(entry))) {
+      return false
+    }
+    const surfaces = entry.kind === 'managed' ? entry.profile.surfaces : entry.entry.surfaces
+    return surfaces.cli && appSpecs[appFromEntry(entry)].hasUsage
+  })
+  const results = useQueries({
+    queries: entries.map((entry) => ({
+      queryKey: queryKeys.profileUsage(entryId(entry)),
+      queryFn: () => fetchUsableUsage(entryId(entry)),
+      enabled: state.phase === 'expanded',
+      staleTime: usageStaleMs,
+      retry: false,
+    })),
+  })
+  const now = new Date()
+  const rows: Array<Row> = entries.map((entry, index) => {
+    const result = results[index]
+    const quota = result?.data?.quota
+    return {
+      entry,
+      meter: quota ? weeklyMeter(appFromEntry(entry), quota, now) : null,
+      problem: quota ? null : problemText(result?.error),
+    }
+  })
+  return <NotchFrame state={state} entries={rows} meters={rows.map((row) => row.meter)} />
+}
+
+function NotchFrame({
+  state,
+  entries,
+  meters,
+}: {
+  state: NotchState
+  entries: Array<Row>
+  meters: Array<WeeklyMeter | null>
+}) {
+  const rowsRef = useRef<HTMLDivElement>(null)
+  const open = state.phase === 'expanded'
+  const highest = highestPercent(meters)
+
+  // The rows render folded too, clipped by the window, so their height is
+  // known before the panel opens and the open is a single resize. They sit
+  // inside the scrolling body, which the folded window squeezes, so their
+  // own height stays the natural one.
+  useEffect(() => {
+    const rows = rowsRef.current
+    if (!rows) {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      void setNotchContentHeight(rows.offsetHeight)
+    })
+    observer.observe(rows)
+    return () => observer.disconnect()
+  }, [])
+
+  // Measure again as the panel opens, so a reading the shell missed while
+  // folded cannot leave the open panel clipped.
+  useEffect(() => {
+    const rows = rowsRef.current
+    if (open && rows) {
+      void setNotchContentHeight(rows.offsetHeight)
+    }
+  }, [open])
+
+  const style = {
+    '--notch-width': `${state.notch}px`,
+    '--notch-height': `${state.height}px`,
+    '--notch-wing': `${state.wing}px`,
+    '--notch-fillet': `${state.fillet}px`,
+    width: state.bodyWidth,
+  } as CSSProperties
+
+  return (
+    <div className={open ? 'notch-panel notch-panel-open' : 'notch-panel'} style={style}>
+      <header className="notch-header">
+        <div className="notch-wing notch-wing-left">
+          <span className="notch-mark" data-level={meterLevel(highest)} />
+        </div>
+        <div />
+        <div className="notch-wing notch-wing-right">
+          {highest === null ? null : <span className="notch-wing-figure">{Math.round(highest)}%</span>}
+        </div>
+      </header>
+      <div className="notch-body" style={{ maxHeight: state.bodyMaxHeight }}>
+        <div ref={rowsRef} className="notch-rows">
+          {entries.length === 0 ? <p className="notch-empty">No profiles with usage</p> : null}
+          {entries.map((row) => (
+            <ProfileMeter key={entryId(row.entry)} row={row} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProfileMeter({ row }: { row: Row }) {
+  const { entry, meter } = row
+  const percent = meter?.percent ?? null
+  return (
+    <button
+      type="button"
+      className="notch-row"
+      onClick={() => {
+        void openProfileFromNotch(entryId(entry))
+      }}
+    >
+      <span className="notch-row-head">
+        <Swatch entry={entry} />
+        <span className="notch-name">{entry.kind === 'managed' ? entry.profile.name : entry.entry.name}</span>
+        <span className="notch-figure" data-level={meterLevel(percent)}>
+          {formatPercent(percent)}
+        </span>
+      </span>
+      <LedBar percent={percent} elapsed={meter?.elapsed ?? null} level={meterLevel(percent)} />
+      <span className="notch-row-foot">
+        <span>{footText(row)}</span>
+        <span>{meter?.session ? `${meter.session.label} ${formatPercent(meter.session.percent)}` : ''}</span>
+      </span>
+    </button>
+  )
+}
+
+/** A managed profile's colour; a stock entry, which has none, as an outline. */
+function Swatch({ entry }: { entry: SidebarEntry }) {
+  if (entry.kind === 'default') {
+    return <span className="notch-swatch notch-swatch-outline" />
+  }
+  return <span className="notch-swatch" style={{ backgroundColor: entry.profile.color }} />
+}
+
+function formatPercent(percent: number | null): string {
+  return percent === null ? '--' : `${Math.round(percent)}%`
+}
+
+/** Pure: the line under a meter — why it is empty, or when it resets. */
+function footText({ meter, problem }: Row): string {
+  if (problem) {
+    return problem
+  }
+  const resetsIn = meter?.resetsAt ? formatResetsIn(meter.resetsAt, new Date()) : null
+  return resetsIn ? `Resets in ${resetsIn}` : 'Weekly limit'
+}
+
+/** Pure: a short reason for a profile with no reading, or null while loading. */
+function problemText(error: unknown): string | null {
+  if (!(error instanceof UsageUnavailableError)) {
+    return error ? 'No reading' : null
+  }
+  if (error.code === 'no_credentials' || error.code === 'needs_login' || error.code === 'unauthorized') {
+    return 'Sign-in needed'
+  }
+  if (error.code === 'rate_limited') {
+    return 'Rate limited'
+  }
+  if (error.code === 'network') {
+    return 'Offline'
+  }
+  return 'No reading'
+}

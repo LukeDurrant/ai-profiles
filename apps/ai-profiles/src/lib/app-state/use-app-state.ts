@@ -71,7 +71,22 @@ export function computeOptimisticAppState(previous: AppState, patch: AppStatePat
     dockIconAcknowledgedAt: patch.dockIconAcknowledgedAt ?? previous.dockIconAcknowledgedAt,
     defaultProfileNames: withDefaultProfileName(previous.defaultProfileNames, patch.defaultProfileName),
     dismissedRepairSessions: withDismissedRepair(previous.dismissedRepairSessions, patch.dismissedRepair),
+    notchHudOff: patch.notchHudOff ?? previous.notchHudOff,
+    notchHiddenProfiles: withNotchProfile(previous.notchHiddenProfiles, patch.notchProfile),
   }
+}
+
+/** Mirrors the Rust side: a shown profile leaves the hidden list. */
+function withNotchProfile(
+  hidden: AppState['notchHiddenProfiles'] | undefined,
+  change: AppStatePatch['notchProfile'],
+): AppState['notchHiddenProfiles'] {
+  const current = hidden ?? []
+  if (!change) {
+    return current
+  }
+  const others = current.filter((id) => id !== change.profileId)
+  return change.shown ? others : [...others, change.profileId]
 }
 
 /** Mirrors the Rust side: trims, and an empty name drops the custom name. */
