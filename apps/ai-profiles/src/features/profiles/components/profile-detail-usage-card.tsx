@@ -8,6 +8,7 @@ import { format } from 'date-fns'
 import { ArrowLeftRight, RefreshCw } from 'lucide-react'
 
 import { Skeleton, TooltipBubble } from '@/design'
+import { NotchProfileControls } from '@/features/notch/components/notch-profile-controls'
 import { appSpecs } from '@/lib/app-registry'
 import { openCliLogin } from '@/lib/commands'
 
@@ -143,6 +144,7 @@ function UsageCardInner({ app, profileId, cliCommand }: { app: AppId; profileId:
             ) : null}
           </div>
           <div className="flex items-center gap-[7px]">
+            <NotchProfileControls profileId={profileId} />
             <RefreshCountdown isFetching={isFetching} dataUpdatedAt={dataUpdatedAt} />
             <button
               type="button"

@@ -155,6 +155,20 @@ export type AppState = {
    * session not among them needs repair.
    */
   dismissedRepairSessions: Record<string, Array<string>>
+  /** The user turned off the weekly-limit HUD in the notch. On by default. */
+  notchHudOff: boolean
+  /** The profiles (or default entries) left out of the notch HUD. */
+  notchHiddenProfiles: Array<string>
+  /**
+   * The usage percentages that drop the notch panel open, or `null` for the
+   * defaults (50, 75, 90, 100). An empty list turns usage alerts off.
+   */
+  usageAlertThresholds: Array<number> | null
+  /**
+   * The profiles (or default entries) whose weekly pace counts only Monday
+   * to Friday. The rest count all seven days.
+   */
+  fiveDayWeekProfiles: Array<string>
 }
 
 export type AppStatePatch = {
@@ -179,6 +193,14 @@ export type AppStatePatch = {
    * list forgets the dismissal.
    */
   dismissedRepair?: { profileId: string; sessionIds: Array<string> }
+  /** Turns the notch HUD off, or back on. */
+  notchHudOff?: boolean
+  /** Shows one profile in the notch HUD, or leaves it out. */
+  notchProfile?: { profileId: string; shown: boolean }
+  /** Sets the usage alert thresholds. An empty list turns alerts off. */
+  usageAlertThresholds?: Array<number>
+  /** Gives one profile a 5- or 7-day working week. */
+  workingWeek?: { profileId: string; days: 5 | 7 }
 }
 
 /**

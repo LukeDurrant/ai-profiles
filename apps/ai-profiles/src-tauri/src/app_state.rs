@@ -1,7 +1,7 @@
 //! Persisted app-level state — independent of profiles.json.
 //! Holds first-run flags and dismissal timestamps.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::app_kind::AppKind;
 use crate::error::{AppError, AppResult};
 use crate::paths::{app_state_json_path, ensure_app_dir};
+use crate::usage_alerts;
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -50,6 +51,30 @@ pub struct AppState {
     /// stays away until a session not among them needs repair.
     #[serde(default)]
     pub dismissed_repair_sessions: BTreeMap<String, Vec<String>>,
+    /// The user turned off the weekly-limit HUD in the notch. On by default.
+    #[serde(default)]
+    pub notch_hud_off: bool,
+    /// The profiles (or `default:<app>` entries) the user left out of the
+    /// notch HUD.
+    #[serde(default)]
+    pub notch_hidden_profiles: BTreeSet<String>,
+    /// The usage percentages that drop the notch panel open, or `None` for
+    /// the defaults. An empty list turns usage alerts off.
+    #[serde(default)]
+    pub usage_alert_thresholds: Option<Vec<u8>>,
+    /// The profiles (or `default:<app>` entries) whose weekly pace counts
+    /// only Monday to Friday. The rest count all seven days.
+    #[serde(default)]
+    pub five_day_week_profiles: BTreeSet<String>,
+}
+
+impl AppState {
+    /// The usage percentages that drop the notch panel open.
+    pub fn alert_thresholds(&self) -> Vec<u8> {
+        self.usage_alert_thresholds
+            .clone()
+            .unwrap_or_else(|| usage_alerts::DEFAULT_THRESHOLDS.to_vec())
+    }
 }
 
 /// Renames one app's stock-install entry. An empty (or all-whitespace) name
@@ -62,6 +87,22 @@ pub struct DefaultProfileName {
 }
 
 const DEFAULT_PROFILE_NAME_MAX_CHARS: usize = 64;
+
+/// Shows profile `profile_id` in the notch HUD, or leaves it out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotchProfile {
+    pub profile_id: String,
+    pub shown: bool,
+}
+
+/// Sets how many days profile `profile_id`'s week has: 5 or 7.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingWeekPatch {
+    pub profile_id: String,
+    pub days: u8,
+}
 
 /// Sets the sessions a profile's repair offer was dismissed for. An empty
 /// list forgets the dismissal.
@@ -99,6 +140,14 @@ pub struct AppStatePatch {
     pub default_profile_name: Option<DefaultProfileName>,
     #[serde(default)]
     pub dismissed_repair: Option<DismissedRepair>,
+    #[serde(default)]
+    pub notch_hud_off: Option<bool>,
+    #[serde(default)]
+    pub notch_profile: Option<NotchProfile>,
+    #[serde(default)]
+    pub working_week: Option<WorkingWeekPatch>,
+    #[serde(default)]
+    pub usage_alert_thresholds: Option<Vec<u8>>,
 }
 
 pub fn load() -> AppResult<AppState> {
@@ -170,6 +219,34 @@ pub fn apply(patch: AppStatePatch) -> AppResult<AppState> {
                 .insert(dismissed.profile_id, dismissed.session_ids);
         }
     }
+    if let Some(off) = patch.notch_hud_off {
+        state.notch_hud_off = off;
+    }
+    if let Some(thresholds) = patch.usage_alert_thresholds {
+        state.usage_alert_thresholds = Some(usage_alerts::normalise_thresholds(&thresholds));
+    }
+    if let Some(week) = patch.working_week {
+        match week.days {
+            5 => {
+                state.five_day_week_profiles.insert(week.profile_id);
+            }
+            7 => {
+                state.five_day_week_profiles.remove(&week.profile_id);
+            }
+            days => {
+                return Err(AppError::Validation(format!(
+                    "a working week has 5 or 7 days, not {days}"
+                )))
+            }
+        }
+    }
+    if let Some(notch) = patch.notch_profile {
+        if notch.shown {
+            state.notch_hidden_profiles.remove(&notch.profile_id);
+        } else {
+            state.notch_hidden_profiles.insert(notch.profile_id);
+        }
+    }
     save(&state)?;
     Ok(state)
 }
@@ -178,7 +255,10 @@ pub fn apply(patch: AppStatePatch) -> AppResult<AppState> {
 /// nothing when it keeps nothing.
 pub fn forget_profile(id: &str) -> AppResult<()> {
     let mut state = load()?;
-    if state.dismissed_repair_sessions.remove(id).is_none() {
+    let repair = state.dismissed_repair_sessions.remove(id).is_some();
+    let notch = state.notch_hidden_profiles.remove(id);
+    let week = state.five_day_week_profiles.remove(id);
+    if !repair && !notch && !week {
         return Ok(());
     }
     save(&state)
@@ -271,6 +351,10 @@ mod tests {
             dock_icon_acknowledged_at: Some("2026-05-21T09:30:00Z".into()),
             default_profile_names: BTreeMap::from([(AppKind::Claude, "Personal".into())]),
             dismissed_repair_sessions: BTreeMap::from([("p1".into(), vec!["s1".into()])]),
+            notch_hud_off: true,
+            notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
+            five_day_week_profiles: BTreeSet::new(),
         };
         save(&state).unwrap();
         let loaded = load().unwrap();
@@ -291,6 +375,10 @@ mod tests {
             dock_icon_acknowledged_at: Some("acknowledged".into()),
             default_profile_names: BTreeMap::new(),
             dismissed_repair_sessions: BTreeMap::new(),
+            notch_hud_off: false,
+            notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
+            five_day_week_profiles: BTreeSet::new(),
         })
         .unwrap();
 
@@ -321,6 +409,10 @@ mod tests {
             dock_icon_acknowledged_at: None,
             default_profile_names: BTreeMap::new(),
             dismissed_repair_sessions: BTreeMap::new(),
+            notch_hud_off: false,
+            notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
+            five_day_week_profiles: BTreeSet::new(),
         })
         .unwrap();
 
@@ -384,6 +476,10 @@ mod tests {
             dock_icon_acknowledged_at: None,
             default_profile_names: BTreeMap::new(),
             dismissed_repair_sessions: BTreeMap::new(),
+            notch_hud_off: false,
+            notch_hidden_profiles: BTreeSet::new(),
+            usage_alert_thresholds: None,
+            five_day_week_profiles: BTreeSet::new(),
         })
         .unwrap();
         let after = apply(AppStatePatch {
@@ -538,5 +634,70 @@ mod tests {
     fn state_without_default_profile_names_still_loads() {
         let parsed: AppState = serde_json::from_str(r#"{"welcomeShown": true}"#).unwrap();
         assert!(parsed.default_profile_names.is_empty());
+    }
+
+    fn show_in_notch(id: &str, shown: bool) -> AppResult<AppState> {
+        apply(AppStatePatch {
+            notch_profile: Some(NotchProfile {
+                profile_id: id.into(),
+                shown,
+            }),
+            ..AppStatePatch::default()
+        })
+    }
+
+    #[test]
+    fn a_profile_left_out_of_the_notch_comes_back_and_is_forgotten_with_the_profile() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        purge();
+        show_in_notch("p1", false).unwrap();
+        show_in_notch("p2", false).unwrap();
+        assert!(load().unwrap().notch_hidden_profiles.contains("p1"));
+
+        let after = show_in_notch("p1", true).unwrap();
+        assert!(!after.notch_hidden_profiles.contains("p1"));
+
+        forget_profile("p2").unwrap();
+        assert!(load().unwrap().notch_hidden_profiles.is_empty());
+        purge();
+    }
+
+    #[test]
+    fn alert_thresholds_default_until_set_and_an_empty_list_turns_them_off() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        purge();
+        assert_eq!(load().unwrap().alert_thresholds(), vec![50, 75, 90, 100]);
+        let set = |thresholds: Vec<u8>| {
+            apply(AppStatePatch {
+                usage_alert_thresholds: Some(thresholds),
+                ..AppStatePatch::default()
+            })
+            .unwrap()
+        };
+        assert_eq!(set(vec![95, 80, 80]).alert_thresholds(), vec![80, 95]);
+        assert!(set(Vec::new()).alert_thresholds().is_empty());
+        purge();
+    }
+
+    #[test]
+    fn a_profile_takes_a_five_or_seven_day_week_and_nothing_else() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        purge();
+        let set = |days: u8| {
+            apply(AppStatePatch {
+                working_week: Some(WorkingWeekPatch {
+                    profile_id: "p1".into(),
+                    days,
+                }),
+                ..AppStatePatch::default()
+            })
+        };
+        assert!(set(5).unwrap().five_day_week_profiles.contains("p1"));
+        assert!(set(6).is_err());
+        assert!(!set(7).unwrap().five_day_week_profiles.contains("p1"));
+        set(5).unwrap();
+        forget_profile("p1").unwrap();
+        assert!(load().unwrap().five_day_week_profiles.is_empty());
+        purge();
     }
 }

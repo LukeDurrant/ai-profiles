@@ -69,6 +69,10 @@ const appState: AppState = {
   dockIconAcknowledgedAt: null,
   defaultProfileNames: {},
   dismissedRepairSessions: {},
+  notchHudOff: false,
+  notchHiddenProfiles: [],
+  usageAlertThresholds: null,
+  fiveDayWeekProfiles: [],
 }
 
 const guiDataDir = '/Users/ada/Library/Application Support/Claude'

@@ -32,6 +32,10 @@ function appState(dismissedRepairSessions: AppState['dismissedRepairSessions'] =
     dockIconAcknowledgedAt: null,
     defaultProfileNames: {},
     dismissedRepairSessions,
+    notchHudOff: false,
+    notchHiddenProfiles: [],
+    usageAlertThresholds: null,
+    fiveDayWeekProfiles: [],
   }
 }
 

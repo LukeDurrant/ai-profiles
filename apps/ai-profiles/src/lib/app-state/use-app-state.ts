@@ -71,7 +71,33 @@ export function computeOptimisticAppState(previous: AppState, patch: AppStatePat
     dockIconAcknowledgedAt: patch.dockIconAcknowledgedAt ?? previous.dockIconAcknowledgedAt,
     defaultProfileNames: withDefaultProfileName(previous.defaultProfileNames, patch.defaultProfileName),
     dismissedRepairSessions: withDismissedRepair(previous.dismissedRepairSessions, patch.dismissedRepair),
+    notchHudOff: patch.notchHudOff ?? previous.notchHudOff,
+    notchHiddenProfiles: withProfileFlag(
+      previous.notchHiddenProfiles,
+      patch.notchProfile && { profileId: patch.notchProfile.profileId, on: !patch.notchProfile.shown },
+    ),
+    usageAlertThresholds: patch.usageAlertThresholds ?? previous.usageAlertThresholds,
+    fiveDayWeekProfiles: withProfileFlag(
+      previous.fiveDayWeekProfiles,
+      patch.workingWeek && { profileId: patch.workingWeek.profileId, on: patch.workingWeek.days === 5 },
+    ),
   }
+}
+
+/**
+ * Mirrors the Rust side for a per-profile list: a profile joins it when its
+ * flag goes on and leaves when it goes off.
+ */
+function withProfileFlag(
+  ids: Array<string> | undefined,
+  change: { profileId: string; on: boolean } | undefined,
+): Array<string> {
+  const current = ids ?? []
+  if (!change) {
+    return current
+  }
+  const others = current.filter((id) => id !== change.profileId)
+  return change.on ? [...others, change.profileId] : others
 }
 
 /** Mirrors the Rust side: trims, and an empty name drops the custom name. */
