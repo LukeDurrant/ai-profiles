@@ -199,6 +199,18 @@ impl Notch {
     }
 }
 
+/// True when `actual` is more than half a point from `expected` on any edge.
+fn frame_drifted(expected: &Rect, actual: &Rect) -> bool {
+    [
+        expected.x - actual.x,
+        expected.y - actual.y,
+        expected.width - actual.width,
+        expected.height - actual.height,
+    ]
+    .iter()
+    .any(|delta| delta.abs() > 0.5)
+}
+
 /// The notch of a display, or `None` when the display has none.
 ///
 /// `display` is the display frame. `safe_top` is the top safe-area inset and
@@ -233,8 +245,8 @@ mod macos {
     use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
     use super::{
-        notch_rect, Notch, NotchPhase, NotchState, Rect, ALERT_EVENT, LABEL, MAX_WING,
-        OPEN_PROFILE_EVENT, STATE_EVENT, WING,
+        frame_drifted, notch_rect, Notch, NotchPhase, NotchState, Rect, ALERT_EVENT, LABEL,
+        MAX_WING, OPEN_PROFILE_EVENT, STATE_EVENT, WING,
     };
     use crate::usage_alerts::UsageAlert;
 
@@ -246,9 +258,10 @@ mod macos {
     const LINGER: Duration = Duration::from_millis(1200);
     /// How long a usage alert holds the panel open, pointer or not.
     const ALERT_HOLD: Duration = Duration::from_secs(8);
-    /// How often the watcher reads the displays again, in polls: a lid that
-    /// closes or a resolution change moves or removes the notch.
-    const DISPLAY_EVERY: u32 = 30;
+    /// How often the watcher reads the displays again and checks the panel
+    /// is still on the notch, in polls: a lid that closes or a resolution
+    /// change moves or removes the notch, and macOS moves windows itself.
+    const DISPLAY_EVERY: u32 = 10;
 
     #[derive(Debug)]
     struct Hud {
@@ -476,7 +489,12 @@ mod macos {
                 if polls.is_multiple_of(DISPLAY_EVERY) {
                     let native = window.clone();
                     let _ = window.run_on_main_thread(move || {
-                        if refresh_notch() {
+                        // macOS moves windows itself when displays change —
+                        // sleep, the lid, a monitor plugged in or rearranged —
+                        // and pushes one over the menu bar down into the
+                        // screen. Put the panel back whenever it is not where
+                        // it belongs, not only when the notch changed.
+                        if refresh_notch() || drifted(&native) {
                             apply(&native);
                         }
                     });
@@ -545,6 +563,24 @@ mod macos {
             );
             ns_window.orderFrontRegardless();
         });
+    }
+
+    /// True when the window is not where the cached notch puts it. Main
+    /// thread only.
+    fn drifted(window: &WebviewWindow) -> bool {
+        use objc2_app_kit::NSWindow;
+
+        let Some(expected) = current_frame() else {
+            return false;
+        };
+        let Ok(pointer) = window.ns_window() else {
+            return false;
+        };
+        // SAFETY: Tauri hands out the live NSWindow of this webview window,
+        // and this runs on the main thread.
+        let ns_window: &NSWindow = unsafe { &*pointer.cast::<NSWindow>() };
+        let actual = rect(ns_window.frame());
+        frame_drifted(&expected, &actual)
     }
 
     /// The pointer in screen points.
@@ -789,5 +825,23 @@ mod tests {
         let json = serde_json::to_value(state).expect("serializable");
         assert_eq!(json["phase"], "collapsed");
         assert_eq!(json["bodyWidth"], 204.0 + 2.0 * WING);
+    }
+
+    #[test]
+    fn a_frame_moved_by_macos_counts_as_drifted() {
+        let expected = notch().frame(NotchPhase::Collapsed, 0.0, WING);
+        assert!(!frame_drifted(&expected, &expected));
+        // Rounding in AppKit is not drift.
+        let rounded = Rect {
+            x: expected.x + 0.25,
+            ..expected
+        };
+        assert!(!frame_drifted(&expected, &rounded));
+        // Pushed down into the screen, as a display change does.
+        let pushed = Rect {
+            y: expected.y - 300.0,
+            ..expected
+        };
+        assert!(frame_drifted(&expected, &pushed));
     }
 }
