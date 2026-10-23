@@ -1,4 +1,4 @@
-import type { SessionAction } from '@/lib/types'
+import type { Period, SessionAction } from '@/lib/types'
 
 /**
  * Typed query-key factory.
@@ -19,6 +19,9 @@ export const queryKeys = {
   // (which fires on reorder/delete/migration) doesn't refetch every
   // visible profile's quota in parallel and trip the rate limiter.
   profileUsage: (id: string) => ['profile-usage', id] as const,
+  // Outside the `profiles` subtree for the same reason: it walks every
+  // transcript the profile has.
+  profileApiCost: (id: string, period: Period) => ['profile-api-cost', id, period] as const,
   dependencies: ['dependencies'] as const,
   migration: {
     existing: ['migration', 'existing'] as const,

@@ -2,6 +2,7 @@ import type { AppId } from './app-registry'
 import type {
   AccountStatus,
   ActionCheck,
+  ApiCost,
   AppMetadata,
   AppState,
   AppStatePatch,
@@ -14,6 +15,7 @@ import type {
   MovePlan,
   MoveReport,
   PathHookOutcome,
+  Period,
   Profile,
   ProfilePatch,
   ProfilePaths,
@@ -144,6 +146,10 @@ export function openCliLogin(id: string): Promise<void> {
 
 export function getProfileUsage(profileId: string): Promise<ProfileUsage> {
   return invoke<ProfileUsage>('get_profile_usage', { profileId })
+}
+
+export function getProfileApiCost(profileId: string, period: Period): Promise<ApiCost> {
+  return invoke<ApiCost>('get_profile_api_cost', { profileId, period })
 }
 
 /**
