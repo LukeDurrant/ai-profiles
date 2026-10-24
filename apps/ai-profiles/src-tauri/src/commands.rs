@@ -22,7 +22,9 @@ use crate::sessions::{
 };
 use crate::usage::{
     self,
+    api_cost::{self, ApiCost, Period},
     codex::CodexQuotaProvider,
+    prices,
     quota::{ClaudeQuotaCache, ClaudeQuotaProvider},
     ProfileUsage,
 };
@@ -99,7 +101,7 @@ pub fn delete_profile(id: String, move_to_trash: bool) -> AppResult<()> {
 ///
 /// Deleting a profile is not refused: it goes away on purpose, and its data goes
 /// out from under a running app either way, wrapper or not.
-fn ensure_wrapper_not_running(id: &str) -> AppResult<()> {
+pub(crate) fn ensure_wrapper_not_running(id: &str) -> AppResult<()> {
     let all = profiles::load()?;
     let Some(profile) = all.iter().find(|candidate| candidate.id == id) else {
         return Ok(());
@@ -642,6 +644,30 @@ pub(crate) async fn fetch_profile_usage(
             Ok(usage::build(&config_dir, &CodexQuotaProvider).await)
         }
     }
+}
+
+/// An estimate of what profile `profile_id`'s Claude Code or Codex use over
+/// `period` would cost at API prices, at the
+/// price list in use (refreshed in the background when it is over a day
+/// old). How the profile is billed isn't read: its account can't say how each
+/// request was paid for. On a blocking thread, as it walks every transcript.
+#[tauri::command]
+pub async fn get_profile_api_cost(profile_id: String, period: Period) -> AppResult<ApiCost> {
+    let read = match resolve_app(&profile_id)? {
+        AppKind::Claude => api_cost::read,
+        AppKind::Codex => api_cost::codex::read,
+    };
+    let config_dir = resolve_cli_config_dir(&profile_id)?;
+    prices::refresh_if_stale();
+    tokio::task::spawn_blocking(move || {
+        read(
+            &config_dir,
+            &prices::current(),
+            period.days(chrono::Local::now().date_naive()),
+        )
+    })
+    .await
+    .map_err(|error| AppError::Io(std::io::Error::other(error)))
 }
 
 /// The sessions profile `profile_id` (or `default:<app>`) owns. Async so a

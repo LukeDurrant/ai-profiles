@@ -3,7 +3,7 @@ import type { AppState, AppStatePatch } from '@/lib/types'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { Segmented, TooltipBubble } from '@/design'
+import { PortalTooltip, Segmented } from '@/design'
 import { computeOptimisticAppState } from '@/lib/app-state/use-app-state'
 import { loadAppState, updateAppState } from '@/lib/commands'
 import { queryKeys } from '@/lib/query/keys'
@@ -66,16 +66,17 @@ export function NotchProfileControls({ profileId }: { profileId: string }) {
   }
   return (
     <>
-      <span className="group relative inline-flex">
-        <Segmented<WeekOption>
-          size="small"
-          ariaLabel="Working week"
-          options={weekOptions}
-          value={notch.week}
-          onChange={notch.setWeek}
-        />
-        <TooltipBubble>Working week for the weekly pace</TooltipBubble>
-      </span>
+      <PortalTooltip label="Working week for the weekly pace">
+        <span className="inline-flex">
+          <Segmented<WeekOption>
+            size="small"
+            ariaLabel="Working week"
+            options={weekOptions}
+            value={notch.week}
+            onChange={notch.setWeek}
+          />
+        </span>
+      </PortalTooltip>
       <button
         type="button"
         role="switch"

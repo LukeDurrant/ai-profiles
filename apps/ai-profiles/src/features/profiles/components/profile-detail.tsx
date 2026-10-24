@@ -9,11 +9,13 @@ import { useDependencies } from '@/features/dependencies/api/use-dependencies'
 import { SessionsPanel } from '@/features/sessions/components/sessions-panel'
 import { appSpecs, wrapperCommand } from '@/lib/app-registry'
 
+import { useCustomIcon } from '../api/use-custom-icon'
 import { useProfileAccount } from '../api/use-profile-account'
 import { useProfileLastUsed } from '../api/use-profile-last-used'
 import { useProfilePaths } from '../api/use-profile-paths'
 import { accountLabel, accountTitle } from './account-line'
 import { formatLastUsed } from './format-last-used'
+import { ProfileDetailApiCost } from './profile-detail-api-cost'
 import { ProfileDetailHeader, ProfileSwatch } from './profile-detail-header'
 import { ProfileDetailInfo } from './profile-detail-info'
 import { ProfileDetailOverflowMenu, ProfileDetailOverflowMenuFallback } from './profile-detail-overflow-menu'
@@ -37,6 +39,7 @@ export function ProfileDetail({ profile, shortcutsEnabled, onEdit, onDelete }: P
   const command = wrapperCommand(profile.app, profile.slug)
   const account = useProfileAccount(profile.id)
   const signedInAs = accountLabel(account)
+  const icon = useCustomIcon(profile.id, true)
   // Above the boundary below, which swaps one surfaces panel for another as
   // soon as the paths land.
   const launch = useGuiLaunch()
@@ -47,7 +50,7 @@ export function ProfileDetail({ profile, shortcutsEnabled, onEdit, onDelete }: P
       header={
         <ProfileDetailHeader
           name={profile.name}
-          swatch={<ProfileSwatch color={profile.color} />}
+          swatch={<ProfileSwatch color={profile.color} icon={icon} />}
           info={<ProfileDetailInfo app={profile.app} command={command} />}
           subline={
             <>
@@ -80,6 +83,7 @@ export function ProfileDetail({ profile, shortcutsEnabled, onEdit, onDelete }: P
         cliEnabled={profile.surfaces.cli}
         profileId={profile.id}
       />
+      <ProfileDetailApiCost app={profile.app} profileId={profile.id} />
 
       {/* Only the two row descriptions wait on per-profile data, so the
           fallback is the same panel with its description slots empty: the
