@@ -20,6 +20,7 @@ function appState(overrides: Partial<AppState> = {}): AppState {
     dockIconAcknowledgedAt: null,
     defaultProfileNames: {},
     dismissedRepairSessions: {},
+    defaultProfileColors: {},
     notchHudOff: false,
     notchHiddenProfiles: [],
     usageAlertThresholds: null,

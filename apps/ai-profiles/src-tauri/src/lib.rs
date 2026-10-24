@@ -11,6 +11,7 @@ mod error;
 mod inherited_env;
 mod launch;
 mod launchers;
+mod line_cache;
 mod migration;
 mod notch;
 mod path_setup;
@@ -167,6 +168,7 @@ pub fn run() {
             commands::notch_open_profile,
             commands::get_app_metadata,
             commands::get_profile_usage,
+            commands::get_profile_api_cost,
             commands::open_external_url,
             commands::open_cli_login,
             commands::list_sessions,
@@ -177,6 +179,11 @@ pub fn run() {
             commands::move_session,
             commands::check_session_repair,
             commands::repair_sessions,
+            launchers::custom_icon::custom_icon,
+            launchers::custom_icon::generated_icon_preview,
+            launchers::custom_icon::check_custom_icon,
+            launchers::custom_icon::set_custom_icon,
+            launchers::custom_icon::clear_custom_icon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

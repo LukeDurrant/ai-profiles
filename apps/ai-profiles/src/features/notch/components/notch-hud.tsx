@@ -294,12 +294,13 @@ function LimitBar({ meter, problem }: { meter: LimitMeter | null; problem: strin
   )
 }
 
-/** A managed profile's colour; a stock entry, which has none, as an outline. */
+/** The profile's colour; a Default entry without one, as an outline. */
 function Swatch({ entry }: { entry: SidebarEntry }) {
-  if (entry.kind === 'default') {
+  const color = entry.kind === 'managed' ? entry.profile.color : entry.entry.color
+  if (!color) {
     return <span className="notch-swatch notch-swatch-outline" />
   }
-  return <span className="notch-swatch" style={{ backgroundColor: entry.profile.color }} />
+  return <span className="notch-swatch" style={{ backgroundColor: color }} />
 }
 
 function formatPercent(percent: number | null): string {

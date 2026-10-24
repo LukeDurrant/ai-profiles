@@ -120,7 +120,7 @@ pub fn save_all(profiles: &[Profile]) -> AppResult<()> {
     Ok(())
 }
 
-fn atomic_write(path: &Path, body: &[u8]) -> AppResult<()> {
+pub(crate) fn atomic_write(path: &Path, body: &[u8]) -> AppResult<()> {
     let parent = path
         .parent()
         .ok_or_else(|| AppError::NotFound(format!("path {} has no parent", path.display())))?;
@@ -220,7 +220,7 @@ pub fn create(
     Ok(profile)
 }
 
-fn is_valid_hex_color(color: &str) -> bool {
+pub(crate) fn is_valid_hex_color(color: &str) -> bool {
     if color.len() != 7 || !color.starts_with('#') {
         return false;
     }

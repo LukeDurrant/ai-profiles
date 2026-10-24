@@ -66,6 +66,7 @@ function appState(notchHiddenProfiles: Array<string> = []): AppState {
     dockIconAcknowledgedAt: null,
     defaultProfileNames: {},
     dismissedRepairSessions: {},
+    defaultProfileColors: {},
     notchHudOff: false,
     notchHiddenProfiles,
     usageAlertThresholds: null,
@@ -142,6 +143,20 @@ describe('NotchHud', () => {
     expect(await screen.findByText('Work')).toBeInTheDocument()
     expect(screen.queryByText('Home')).not.toBeInTheDocument()
     expect(screen.queryByText('Desktop only')).not.toBeInTheDocument()
+  })
+
+  it('gives a Default entry its colour, or an outline without one', async () => {
+    const stock = (app: 'claude' | 'codex', color: string | null): SidebarEntry => ({
+      kind: 'default',
+      entry: { id: `default:${app}`, app, name: app, customName: null, color, surfaces: { gui: true, cli: true } },
+    })
+    given({ entries: [stock('claude', '#6a9bcc'), stock('codex', null)] })
+    renderWithQuery(<NotchHud />)
+    await screen.findByText('claude')
+
+    const swatch = (name: string) => screen.getByText(name).previousElementSibling
+    expect(swatch('claude')).toHaveStyle({ backgroundColor: '#6a9bcc' })
+    expect(swatch('codex')).toHaveClass('notch-swatch-outline')
   })
 
   it('opens the clicked profile in the main window', async () => {

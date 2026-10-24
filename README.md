@@ -7,6 +7,60 @@
   <img alt="ai-profiles app" src="apps/landing/public/screenshot-light.png">
 </picture>
 
+## About this fork
+
+This is [LukeDurrant/ai-profiles](https://github.com/LukeDurrant/ai-profiles), a fork of [bartekczyz/ai-profiles](https://github.com/bartekczyz/ai-profiles). It tracks upstream (currently **1.5.0**) and adds a usage view in the MacBook notch. Upstream decided not to take these changes, so they live here.
+
+### What's different
+
+**Every profile's usage limits in the notch.** A black panel sits in the notch of the built-in display. Folded, it shows a chip per profile with its weekly %, either side of the camera:
+
+![The folded notch](docs/fork/folded.png)
+
+Rest the pointer on the notch and it opens. Each profile gets its 5-hour limit over its weekly limit, with the % used, the time to reset, and a tick where an even pace through the window would be. Dots past the tick mean you're burning faster than a straight line. Amber from 80%, red at 100%. Click a profile to open it in the main window.
+
+![The open notch](docs/fork/open.png)
+
+**Usage alerts.** The notch drops open on its own when a profile's 5-hour or weekly limit crosses a threshold: 50, 75, 90 and 100% by default. It says **Burn warning** when you're ahead of an even pace, and **Usage milestone** otherwise. Each threshold fires once per reset, and launching past one replays nothing.
+
+![A usage alert](docs/fork/alert.png)
+
+The background check behind alerts runs every 5 minutes, but only while you're at the Mac (keyboard or pointer input in the last 10 minutes). It never refreshes a Claude token or marks a sign-in as dead, so it can't sign a profile out overnight.
+
+**Per-profile settings,** in each profile's Usage header:
+
+- **In notch:** leave a profile out of the notch (and its alerts).
+- **5d / 7d:** count the weekly pace over Monday to Friday only, for accounts you use for work. On 5 days the tick holds still over the weekend.
+
+![The In notch switch](docs/fork/usage-in-notch.png)
+![The working-week picker](docs/fork/usage-working-week.png)
+
+**Settings → Appearance** turns the notch on or off and picks the alert thresholds. Selecting none turns alerts off.
+
+![Notch and alert settings](docs/fork/settings-alerts.png)
+
+A Mac without a notch, or with the lid closed, shows no panel. The notch's shape and LED meters are adapted from [antiburn](https://github.com/antiburn/antiburn) (MIT); see [THIRD_PARTY_NOTICES](./THIRD_PARTY_NOTICES).
+
+### Installing this fork
+
+There are no downloadable builds of the fork: the **Download** link below gives upstream's app, without the notch. Build it from source:
+
+```sh
+git clone https://github.com/LukeDurrant/ai-profiles.git
+cd ai-profiles
+pnpm install
+pnpm --dir apps/ai-profiles tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
+`createUpdaterArtifacts` is off because the updater files need upstream's private signing key. Copy the app into place and sign it ad-hoc, since Tauri's own ad-hoc signature fails macOS's strict check:
+
+```sh
+ditto apps/ai-profiles/src-tauri/target/release/bundle/macos/ai-profiles.app /Applications/ai-profiles.app
+codesign --force --deep --sign - /Applications/ai-profiles.app
+```
+
+> **Don't accept the in-app update prompt.** The build still checks upstream's releases, and installing one replaces the fork with upstream's app. Pull the fork and rebuild instead.
+
 ## Landing page
 
 The marketing landing page lives in [`apps/landing/`](apps/landing/README.md) (Astro + Tailwind, deployed to Vercel).
@@ -19,12 +73,16 @@ Download the latest `.dmg` from [Releases](https://github.com/bartekczyz/ai-prof
 
 ### Build from source
 
+You need Node.js 22+, pnpm, and Rust ([rust-lang.org](https://rust-lang.org/)).
+
 ```sh
 git clone https://github.com/bartekczyz/ai-profiles.git
 cd ai-profiles
 pnpm install
-pnpm --filter ai-profiles tauri build
+pnpm --filter ai-profiles tauri build --no-sign
 ```
+
+`--no-sign` skips signing the auto-update archive, which needs a private key in `TAURI_SIGNING_PRIVATE_KEY`. Without it the build fails at the end with `A public key has been found, but no private key`.
 
 The `.dmg` lands in `apps/ai-profiles/src-tauri/target/release/bundle/dmg/`. macOS will warn on first launch because the local build isn't notarized — right-click the `.app` → Open → Open to bypass Gatekeeper.
 
@@ -169,7 +227,10 @@ Profiles link to the skills in your main install, so anything you install there 
 Claude Code reads `AGENTS.md` at project scope only; its user-scope instructions file is `CLAUDE.md`. Codex is the other way round and reads `~/.codex/AGENTS.md`. That's why the table above names a different file per app.
 
 **Does this send any of my data anywhere?**
-No. The app is local-only and has no analytics, no telemetry, no remote logging. Auto-update checks the GitHub Releases manifest and that's the only outbound request.
+No. The app is local-only and has no analytics, no telemetry, no remote logging. It makes only these outbound requests:
+- Auto-update checks the GitHub Releases manifest.
+- The usage card asks Anthropic for a Claude profile's quota, signed in as that profile. Codex profiles ask through the `codex` CLI.
+- The estimated API cost downloads [LiteLLM's public price list](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) from GitHub, at most once a day and only once you view an estimate. It's a plain download that carries nothing about your profiles, transcripts or accounts; the estimate itself is worked out on your machine.
 
 **Can I migrate later if I skipped the first-run prompt?**
 Yes — Settings → Data → "Detect and import…".

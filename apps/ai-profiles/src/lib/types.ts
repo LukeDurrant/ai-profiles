@@ -35,6 +35,8 @@ export type DefaultEntry = {
   name: string
   /** The name the user gave this entry, or `null` for the stock label. */
   customName: string | null
+  /** The colour the user gave this entry (`#rrggbb`), or `null` for none. */
+  color: string | null
   surfaces: Surfaces
 }
 
@@ -155,6 +157,8 @@ export type AppState = {
    * session not among them needs repair.
    */
   dismissedRepairSessions: Record<string, Array<string>>
+  /** Colours the user gave the stock-install entries. Absent key → no colour. */
+  defaultProfileColors: Partial<Record<AppId, string>>
   /** The user turned off the weekly-limit HUD in the notch. On by default. */
   notchHudOff: boolean
   /** The profiles (or default entries) left out of the notch HUD. */
@@ -193,6 +197,10 @@ export type AppStatePatch = {
    * list forgets the dismissal.
    */
   dismissedRepair?: { profileId: string; sessionIds: Array<string> }
+  /**
+   * Colours one app's stock-install entry. An empty colour removes it.
+   */
+  defaultProfileColor?: { app: AppId; color: string }
   /** Turns the notch HUD off, or back on. */
   notchHudOff?: boolean
   /** Shows one profile in the notch HUD, or leaves it out. */
@@ -289,6 +297,80 @@ export type ProfileUsage = {
   quota: QuotaUsage | null
   quotaError: QuotaError | null
   fetchedAt: string
+}
+
+/**
+ * What one model cost, in USD.
+ */
+export type ModelCost = { model: string; usd: number }
+
+/**
+ * The days an API cost estimate covers: yesterday alone, or the last ones up
+ * to today.
+ */
+export type Period = 'today' | 'yesterday' | 'last7Days' | 'last30Days' | 'last90Days' | 'last6Months' | 'year'
+
+/**
+ * An estimate of what a profile's Claude Code or Codex use over a period
+ * would cost at API prices, in USD, read from its transcripts. Not the
+ * profile's bill.
+ */
+export type ApiCost = {
+  totalUsd: number
+  /**
+   * What the whole period would cost at the same pace, when the transcripts
+   * on disk cover only part of it, and at least a week.
+   */
+  projectedUsd: number | null
+  /**
+   * How many days of the period the transcripts reach back to, its last
+   * included: 0 when they start after it.
+   */
+  coveredDays: number
+  /**
+   * Whether the transcripts record any use at all, in the period or not.
+   */
+  hasUse: boolean
+  /**
+   * Each day of the period, oldest first.
+   */
+  days: Array<{ date: string; totalUsd: number; byModel: Array<ModelCost> }>
+  /**
+   * By what was billed. Codex's cache writes, which have no duration, are in
+   * `cacheWrite5m`.
+   */
+  byKind: {
+    input: number
+    output: number
+    cacheWrite5m: number
+    cacheWrite1h: number
+    cacheRead: number
+    webSearch: number
+  }
+  /**
+   * Most expensive first.
+   */
+  byModel: Array<ModelCost>
+  /**
+   * By the repository each session worked in, or outside one the folder it
+   * started in, most expensive first.
+   */
+  projects: Array<{ path: string | null; usd: number }>
+  /**
+   * Use the price list has no rates for, by model (named as in `byModel`)
+   * and by what it lacks (`null` for the model itself, else e.g. "fast-mode
+   * rates"). Its tokens are in none of the costs.
+   */
+  unpriced: Array<{ model: string; missing: string | null; tokens: number }>
+  /**
+   * How much of the use the costs cover: `partial` when some of it has no
+   * price, `unpriced` when none of it does, so the total means nothing.
+   */
+  coverage: 'complete' | 'partial' | 'unpriced'
+  /**
+   * The day the price list is of, `YYYY-MM-DD`.
+   */
+  pricesAsOf: string
 }
 
 /** The account a profile is signed in under, from what its CLI keeps on disk. */
