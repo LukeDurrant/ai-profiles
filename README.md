@@ -7,6 +7,60 @@
   <img alt="ai-profiles app" src="apps/landing/public/screenshot-light.png">
 </picture>
 
+## About this fork
+
+This is [LukeDurrant/ai-profiles](https://github.com/LukeDurrant/ai-profiles), a fork of [bartekczyz/ai-profiles](https://github.com/bartekczyz/ai-profiles). It tracks upstream (currently **1.5.0**) and adds a usage view in the MacBook notch. Upstream decided not to take these changes, so they live here.
+
+### What's different
+
+**Every profile's usage limits in the notch.** A black panel sits in the notch of the built-in display. Folded, it shows a chip per profile with its weekly %, either side of the camera:
+
+![The folded notch](docs/fork/folded.png)
+
+Rest the pointer on the notch and it opens. Each profile gets its 5-hour limit over its weekly limit, with the % used, the time to reset, and a tick where an even pace through the window would be. Dots past the tick mean you're burning faster than a straight line. Amber from 80%, red at 100%. Click a profile to open it in the main window.
+
+![The open notch](docs/fork/open.png)
+
+**Usage alerts.** The notch drops open on its own when a profile's 5-hour or weekly limit crosses a threshold: 50, 75, 90 and 100% by default. It says **Burn warning** when you're ahead of an even pace, and **Usage milestone** otherwise. Each threshold fires once per reset, and launching past one replays nothing.
+
+![A usage alert](docs/fork/alert.png)
+
+The background check behind alerts runs every 5 minutes, but only while you're at the Mac (keyboard or pointer input in the last 10 minutes). It never refreshes a Claude token or marks a sign-in as dead, so it can't sign a profile out overnight.
+
+**Per-profile settings,** in each profile's Usage header:
+
+- **In notch:** leave a profile out of the notch (and its alerts).
+- **5d / 7d:** count the weekly pace over Monday to Friday only, for accounts you use for work. On 5 days the tick holds still over the weekend.
+
+![The In notch switch](docs/fork/usage-in-notch.png)
+![The working-week picker](docs/fork/usage-working-week.png)
+
+**Settings → Appearance** turns the notch on or off and picks the alert thresholds. Selecting none turns alerts off.
+
+![Notch and alert settings](docs/fork/settings-alerts.png)
+
+A Mac without a notch, or with the lid closed, shows no panel. The notch's shape and LED meters are adapted from [antiburn](https://github.com/antiburn/antiburn) (MIT); see [THIRD_PARTY_NOTICES](./THIRD_PARTY_NOTICES).
+
+### Installing this fork
+
+There are no downloadable builds of the fork: the **Download** link below gives upstream's app, without the notch. Build it from source:
+
+```sh
+git clone https://github.com/LukeDurrant/ai-profiles.git
+cd ai-profiles
+pnpm install
+pnpm --dir apps/ai-profiles tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
+`createUpdaterArtifacts` is off because the updater files need upstream's private signing key. Copy the app into place and sign it ad-hoc, since Tauri's own ad-hoc signature fails macOS's strict check:
+
+```sh
+ditto apps/ai-profiles/src-tauri/target/release/bundle/macos/ai-profiles.app /Applications/ai-profiles.app
+codesign --force --deep --sign - /Applications/ai-profiles.app
+```
+
+> **Don't accept the in-app update prompt.** The build still checks upstream's releases, and installing one replaces the fork with upstream's app. Pull the fork and rebuild instead.
+
 ## Landing page
 
 The marketing landing page lives in [`apps/landing/`](apps/landing/README.md) (Astro + Tailwind, deployed to Vercel).
